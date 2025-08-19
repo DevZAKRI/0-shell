@@ -1,0 +1,15 @@
+[package]
+name = "zero-shell"
+version = "0.1.0"
+edition = "2024"
+authors = ["AFETHI, AELABSI, MZAKRI"]
+description = "A minimalist Unix-like shell implemented in Rust"
+
+[[bin]]
+name = "0-shell"
+path = "src/main.rs"
+
+[dependencies]
+nix = "0.30"
+libc = "0.2"
+termion = "4.0"
