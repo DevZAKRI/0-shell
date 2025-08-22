@@ -1,6 +1,8 @@
 use crate::commands::CommandExecutor;
 use crate::error::ShellError;
-
+use std::fs;
+use std::path::Path;
+use std::io;
 pub struct PwdCommand;
 pub struct CdCommand;
 pub struct LsCommand;
@@ -79,19 +81,86 @@ impl CommandExecutor for MkdirCommand {
     }
 }
 
+
+
 impl CommandExecutor for CpCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement cp command
-        // - Copy files and directories
-        // - Handle file to file copying
-        // - Handle file to directory copying
-        todo!("Implement cp command")
+        if args.len() < 2 {
+            return Err(ShellError::ExecutionError("cp: missing operand".to_string()));
+        }
+        // Check for -r flag
+        let recursive = args.contains(&"-r".to_string());
+
+        // Filter arguments to get sources and destination
+        let mut filtered: Vec<&String> = args.iter()
+            .filter(|a| a != &&"-r".to_string())
+            .collect();
+
+         if filtered.len() < 2 {
+            return Err(ShellError::ExecutionError("cp: missing an operand".to_string()));
+        }
+      
+
+        let target = Path::new(filtered.pop().unwrap()); // last argument = destination
+        let sources = filtered; // rest = sources
+
+        for src in sources {
+            let src_path = Path::new(src);
+
+            if !src_path.exists() {
+                eprintln!("cp: cannot stat '{}': No such file or directory", src);
+                continue;
+            }
+
+            if src_path.is_dir() {
+                if !recursive {
+                    eprintln!("cp: omitting directory '{}', use -r to copy", src);
+                    continue;
+                }
+                // Copy directory recursively
+                if let Err(err) = copy_dir_all(src_path, &target.join(src_path.file_name().unwrap())) {
+                    eprintln!("cp: failed to copy directory '{}': {}", src, err);
+                }
+            } else {
+                // Determine destination path
+                let dest_path = if target.is_dir() {
+                    target.join(src_path.file_name().unwrap())
+                } else {
+                    target.to_path_buf()
+                };
+
+                if let Err(err) = fs::copy(src_path, &dest_path) {
+                    eprintln!("cp: failed to copy '{}': {}", src, err);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn help(&self) -> &str {
-        "cp source destination - Copy files and directories"
+        "cp source... destination - Copy files and directories"
     }
 }
+
+/// Recursively copy a directory
+fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+    
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if path.is_dir() {
+            copy_dir_all(&path, &dst_path)?;
+        } else {
+            fs::copy(&path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 
 impl CommandExecutor for MvCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
@@ -109,11 +178,38 @@ impl CommandExecutor for MvCommand {
 
 impl CommandExecutor for RmCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement rm command with -r flag
-        // - Remove files
-        // - Handle -r flag for recursive directory removal
-        // - Handle missing files gracefully
-        todo!("Implement rm command")
+         if args.is_empty() {
+            return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
+        }
+        // Check if -r flag is present
+        let recursive = args.contains(&"-r".to_string());
+        // Collect actual targets (filter out flags)
+        let targets: Vec<&String> = args.iter().filter(|a| a != &&"-r".to_string()).collect();
+        for target in targets {
+            let path = Path::new(target);
+
+            if !path.exists() {
+                eprintln!("rm: cannot remove '{}': No such file or directory", target);
+                continue; 
+            }
+            let result = if path.is_dir() {
+                if recursive {
+                    fs::remove_dir_all(path)
+                } else {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("rm: cannot remove '{}': Is a directory (use -r)", target),
+                    ))
+                }
+            } else {
+                fs::remove_file(path)
+            };
+
+            if let Err(err) = result {
+                eprintln!("rm: failed to remove '{}': {}", target, err);
+            }
+        }
+        Ok(())
     }
 
     fn help(&self) -> &str {
