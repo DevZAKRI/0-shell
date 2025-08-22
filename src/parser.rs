@@ -14,11 +14,20 @@ impl CommandParser {
     }
 
     pub fn parse(&self, input: &str) -> Result<Option<Command>, ShellError> {
-        // TODO: Parse user input into Command struct
-        // - Split input on whitespace
-        // - Extract command name and arguments
-        // - Handle empty input
-        // - Return None for empty input, Some(Command) for valid input
-        todo!("Implement command parsing")
+        let trimmed = input.trim();
+        
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.is_empty() {
+            return Ok(None);
+        }
+
+        let name = parts[0].to_string();
+        let args = parts[1..].iter().map(|s| s.to_string()).collect();
+
+        Ok(Some(Command { name, args }))
     }
 }
