@@ -1,5 +1,6 @@
 use crate::commands::CommandExecutor;
 use crate::error::ShellError;
+use std::fs;
 
 pub struct PwdCommand;
 pub struct CdCommand;
@@ -67,11 +68,16 @@ impl CommandExecutor for CatCommand {
 
 impl CommandExecutor for MkdirCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement mkdir command
-        // - Create directories
-        // - Handle multiple directories
-        // - Handle existing directories gracefully
-        todo!("Implement mkdir command")
+        if args.is_empty() {
+            return Err(ShellError::ExecutionError("mkdir: missing operand".to_string()));
+        }
+
+        for dir_path in args {
+            fs::create_dir_all(dir_path)
+                .map_err(|e| ShellError::FileSystemError(format!("Failed to create directory '{}': {}", dir_path, e)))?;
+        }
+        
+        Ok(())
     }
 
     fn help(&self) -> &str {
