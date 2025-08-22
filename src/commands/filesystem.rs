@@ -161,18 +161,40 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
-
 impl CommandExecutor for MvCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement mv command
-        // - Move/rename files and directories
-        // - Handle file to file moving
-        // - Handle file to directory moving
-        todo!("Implement mv command")
+        if args.len() < 2 {
+            return Err(ShellError::ExecutionError("mv: missing operand".to_string()));
+        }
+        // Last argument = destination
+        let mut filtered = args;
+        let target = Path::new(&filtered[filtered.len() - 1]);
+        let sources = &filtered[..filtered.len() - 1];
+
+        for src in sources {
+            let src_path = Path::new(src);
+
+            if !src_path.exists() {
+                eprintln!("mv: cannot stat '{}': No such file or directory", src);
+                continue;
+            }
+
+            let dest_path = if target.is_dir() {
+                target.join(src_path.file_name().unwrap())
+            } else {
+                target.to_path_buf()
+            };
+
+            if let Err(err) = fs::rename(src_path, &dest_path) {
+                eprintln!("mv: failed to move '{}': {}", src, err);
+            }
+        }
+
+        Ok(())
     }
 
     fn help(&self) -> &str {
-        "mv source destination - Move (rename) files"
+        "mv source... destination - Move (rename) files or directories"
     }
 }
 
