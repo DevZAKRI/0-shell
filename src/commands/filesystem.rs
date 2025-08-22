@@ -1,5 +1,6 @@
 use crate::commands::CommandExecutor;
 use crate::error::ShellError;
+use std::fs;
 
 pub struct PwdCommand;
 pub struct CdCommand;
@@ -53,11 +54,17 @@ impl CommandExecutor for LsCommand {
 
 impl CommandExecutor for CatCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement cat command
-        // - Read and display file contents
-        // - Handle multiple files
-        // - Handle missing files gracefully
-        todo!("Implement cat command")
+        if args.is_empty() {
+            return Err(ShellError::ExecutionError("cat: missing file operand".to_string()));
+        }
+
+        for file_path in args {
+            let content = fs::read_to_string(file_path)
+                .map_err(|e| ShellError::FileSystemError(format!("Failed to read file '{}': {}", file_path, e)))?;
+            print!("{}", content);
+        }
+        println!();
+        Ok(())
     }
 
     fn help(&self) -> &str {
