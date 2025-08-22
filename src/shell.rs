@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use crate::commands::CommandRegistry;
 use crate::parser::CommandParser;
 use crate::error::ShellError;
@@ -29,7 +30,7 @@ impl Shell {
                 break;
             }
             
-            // Parse and execute command
+            // execute command after parsing or err
             if let Err(e) = self.execute_command(&input) {
                 eprintln!("Error: {}", e);
             }
