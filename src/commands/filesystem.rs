@@ -72,16 +72,38 @@ impl CommandExecutor for MkdirCommand {
             return Err(ShellError::ExecutionError("mkdir: missing operand".to_string()));
         }
 
-        for dir_path in args {
-            fs::create_dir_all(dir_path)
-                .map_err(|e| ShellError::FileSystemError(format!("Failed to create directory '{}': {}", dir_path, e)))?;
+        let mut create_parents = false;
+        let mut directories = Vec::new();
+
+        for arg in args {
+            if arg == "-p" {
+                create_parents = true;
+            } else if arg.starts_with('-') {
+                return Err(ShellError::ExecutionError(format!("mkdir: invalid option -- '{}'", &arg[1..])));
+            } else {
+                directories.push(arg);
+            }
+        }
+
+        if directories.is_empty() {
+            return Err(ShellError::ExecutionError("mkdir: missing operand".to_string()));
+        }
+
+        for dir_path in directories {
+            if create_parents {
+                fs::create_dir_all(dir_path)
+                    .map_err(|e| ShellError::FileSystemError(format!("Failed to create directory '{}': {}", dir_path, e)))?;
+            } else {
+                fs::create_dir(dir_path)
+                    .map_err(|e| ShellError::FileSystemError(format!("Failed to create directory '{}': {}", dir_path, e)))?;
+            }
         }
         
         Ok(())
     }
 
     fn help(&self) -> &str {
-        "mkdir [directory...] - Create directories"
+        "mkdir [-p] [directory...] - Create directories"
     }
 }
 
