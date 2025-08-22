@@ -1,3 +1,4 @@
+use std::io::{self, Write};
 use crate::commands::CommandRegistry;
 use crate::parser::CommandParser;
 use crate::error::ShellError;
@@ -37,7 +38,7 @@ impl Shell {
         
         Ok(())
     }
-
+    
     fn display_prompt(&self) -> Result<(), ShellError> {
         print!("$ ");
         io::stdout().flush().map_err(|e| ShellError::IoError(e))?;
