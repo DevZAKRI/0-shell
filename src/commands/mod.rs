@@ -16,21 +16,34 @@ pub struct CommandRegistry {
 
 impl CommandRegistry {
     pub fn new() -> Self {
-        // TODO: Initialize command registry
-        // TODO: Register all built-in commands
-        todo!("Implement command registry initialization")
+        let mut registry = Self {
+            commands: HashMap::new(),
+        };
+        
+        registry.register_builtin_commands();
+        
+        registry
     }
 
     fn register_builtin_commands(&mut self) {
-        // TODO: Register all 10 required commands:
-        // - echo, cd, ls, pwd, cat, cp, rm, mv, mkdir, exit
-        todo!("Implement command registration")
+        self.commands.insert("echo".to_string(), Box::new(builtin::EchoCommand));
+        self.commands.insert("exit".to_string(), Box::new(builtin::ExitCommand));
+        
+        self.commands.insert("pwd".to_string(), Box::new(filesystem::PwdCommand));
+        self.commands.insert("cd".to_string(), Box::new(filesystem::CdCommand));
+        self.commands.insert("ls".to_string(), Box::new(filesystem::LsCommand));
+        self.commands.insert("cat".to_string(), Box::new(filesystem::CatCommand));
+        self.commands.insert("mkdir".to_string(), Box::new(filesystem::MkdirCommand));
+        self.commands.insert("cp".to_string(), Box::new(filesystem::CpCommand));
+        self.commands.insert("mv".to_string(), Box::new(filesystem::MvCommand));
+        self.commands.insert("rm".to_string(), Box::new(filesystem::RmCommand));
     }
 
     pub fn execute(&self, command: &Command) -> Result<(), ShellError> {
-        // TODO: Execute command using registry
-        // - Look up command in registry
-        // - Execute if found, return error if not found
-        todo!("Implement command execution")
+        if let Some(executor) = self.commands.get(&command.name) {
+            executor.execute(&command.args)
+        } else {
+            Err(ShellError::CommandNotFound(command.name.clone()))
+        }
     }
 }
