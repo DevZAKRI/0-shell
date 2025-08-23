@@ -11,7 +11,6 @@ pub struct MkdirCommand;
 pub struct CpCommand;
 pub struct MvCommand;
 pub struct RmCommand;
-
 impl CommandExecutor for PwdCommand {
     fn execute(&self, _args: &[String]) -> Result<(), ShellError> {
         // TODO: Implement pwd command
@@ -92,15 +91,12 @@ impl CommandExecutor for CpCommand {
         let recursive = args.contains(&"-r".to_string());
 
         // Filter arguments to get sources and destination
-        let mut filtered: Vec<&String> = args.iter()
-            .filter(|a| a != &&"-r".to_string())
-            .collect();
+        let mut filtered: Vec<&String> = args.iter().filter(|a| a != &&"-r".to_string()).collect();
 
          if filtered.len() < 2 {
             return Err(ShellError::ExecutionError("cp: missing an operand".to_string()));
         }
       
-
         let target = Path::new(filtered.pop().unwrap()); // last argument = destination
         let sources = filtered; // rest = sources
 
@@ -167,7 +163,7 @@ impl CommandExecutor for MvCommand {
             return Err(ShellError::ExecutionError("mv: missing operand".to_string()));
         }
         // Last argument = destination
-        let mut filtered = args;
+        let filtered = args;
         let target = Path::new(&filtered[filtered.len() - 1]);
         let sources = &filtered[..filtered.len() - 1];
 

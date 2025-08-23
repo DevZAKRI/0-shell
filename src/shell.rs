@@ -17,8 +17,8 @@ impl Shell {
     }
 
     pub fn run(&mut self) -> Result<(), ShellError> {
+        println!("{}", build_banner());
         loop {
-            
             self.display_prompt()?; // "$ ola libghit tb9a tban dima"
             
            
@@ -63,4 +63,49 @@ impl Shell {
         
         Ok(())
     }
+}
+
+fn build_banner() -> String {
+    let terminal_width = 80;
+
+    let lines = [
+        "   ____   _____    _____       _____   _    _ ",
+        "  / __ \\ |  __ \\  / ____|     / ____| | |  | |",
+        " | |  | || |__) || (___      | (___   | |__| |",
+        " | |  | ||  ___/  \\___ \\      \\___ \\  |  __  |",
+        " | |__| || |      ____) |     ____) | | |  | |",
+        "  \\____/ |_|     |_____/     |_____/  |_|  |_|",
+        "                                              ",
+        "        ⚡ O P S - S H ⚡    FAST & LIGHT ⚡     ",
+        "  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> ",
+    ];
+
+    // Gradient colors for speed effect
+    let colors = [
+        "\x1b[91m", // red
+        "\x1b[93m", // yellow
+        "\x1b[96m", // cyan
+    ];
+    let reset = "\x1b[0m";
+
+    let mut out = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        let color = colors[i % colors.len()];
+
+        // Center the line
+        let padding = if l.len() < terminal_width {
+            (terminal_width - l.len()) / 2
+        } else {
+            0
+        };
+        let centered_line = format!("{}{}", " ".repeat(padding), l);
+
+        out.push_str(color);
+        out.push_str(&centered_line);
+        out.push_str(reset);
+        out.push('\n');
+    }
+
+    if out.ends_with('\n') { out.pop(); }
+    out
 }
