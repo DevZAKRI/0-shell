@@ -1,6 +1,7 @@
 use crate::commands::CommandExecutor;
 use crate::error::ShellError;
 use std::fs;
+use std::io::{self, Read, Write};
 
 pub struct PwdCommand;
 pub struct CdCommand;
@@ -54,21 +55,82 @@ impl CommandExecutor for LsCommand {
 
 impl CommandExecutor for CatCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
+        // If no arguments provided, read from stdin
         if args.is_empty() {
-            return Err(ShellError::ExecutionError("cat: missing file operand".to_string()));
+            return self.read_from_stdin();
         }
 
+        //let mut has_error = false;
+
         for file_path in args {
-            let content = fs::read_to_string(file_path)
-                .map_err(|e| ShellError::FileSystemError(format!("Failed to read file '{}': {}", file_path, e)))?;
-            print!("{}", content);
+            match self.process_file(file_path) {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("cat: {}: {}", file_path, e);
+                    //has_error = true;
+                }
+            }
         }
-        println!();
+
+        // if has_error {
+        //     Err(ShellError::ExecutionError("Some files could not be processed".to_string()))
+        // } else {
+        //     Ok(())
+        // }
         Ok(())
     }
 
     fn help(&self) -> &str {
-        "cat [file...] - Concatenate and display files"
+        "cat [file...] - Concatenate and display files (reads from stdin if no files provided)"
+    }
+}
+
+impl CatCommand {
+    /// Read from stdin and write to stdout
+    fn read_from_stdin(&self) -> Result<(), ShellError> {
+        let stdin = io::stdin();
+        let mut handle = stdin.lock();
+        let mut stdout = io::stdout();
+        
+        let mut buffer = [0; 8192];
+        loop {
+            match handle.read(&mut buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    stdout.write_all(&buffer[..n])
+                        .map_err(|e| ShellError::IoError(e))?;
+                }
+                Err(e) => return Err(ShellError::IoError(e)),
+            }
+        }
+        
+        stdout.flush().map_err(|e| ShellError::IoError(e))?;
+        Ok(())
+    }
+
+    /// Process a single file and write its contents to stdout
+    fn process_file(&self, file_path: &str) -> Result<(), ShellError> {
+        // Try to read the file content
+        let content = fs::read_to_string(file_path)
+            .map_err(|e| {
+                match e.kind() {
+                    io::ErrorKind::NotFound => {
+                        ShellError::FileSystemError("No such file or directory".to_string())
+                    }
+                    io::ErrorKind::PermissionDenied => {
+                        ShellError::FileSystemError("Permission denied".to_string())
+                    }
+                    io::ErrorKind::InvalidInput => {
+                        ShellError::FileSystemError("Is a directory".to_string())
+                    }
+                    _ => ShellError::FileSystemError(format!("Cannot read file: {}", e))
+                }
+            })?;
+
+        print!("{}", content);
+        io::stdout().flush().map_err(|e| ShellError::IoError(e))?;
+        
+        Ok(())
     }
 }
 
