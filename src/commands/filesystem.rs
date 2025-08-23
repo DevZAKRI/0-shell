@@ -1,5 +1,6 @@
 use crate::commands::CommandExecutor;
 use crate::error::ShellError;
+use std::env;
 
 pub struct PwdCommand;
 pub struct CdCommand;
@@ -11,11 +12,13 @@ pub struct MvCommand;
 pub struct RmCommand;
 
 impl CommandExecutor for PwdCommand {
-    fn execute(&self, _args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement pwd command
-        // - Get current working directory
-        // - Print to stdout
-        todo!("Implement pwd command")
+    fn execute(&self, args: &[String]) -> Result<(), ShellError> {
+        if args.len() > 0 {
+            return Err(ShellError::ExecutionError("pwd: too many arguments".to_string()));
+        }
+        
+        println!("{}", env::current_dir()?.display());
+        Ok(())
     }
 
     fn help(&self) -> &str {
