@@ -21,9 +21,7 @@ impl CommandExecutor for EchoCommand {
 
 impl CommandExecutor for ExitCommand {
     fn execute(&self, _args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement exit command
-        // - Exit shell cleanly
-        todo!("Implement exit command")
+        std::process::exit(0);
     }
 
     fn help(&self) -> &str {
