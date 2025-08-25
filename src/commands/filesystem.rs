@@ -25,11 +25,21 @@ impl CommandExecutor for PwdCommand {
 
 impl CommandExecutor for CdCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement cd command
-        // - Change to specified directory
-        // - Handle no arguments (go to home directory)
-        // - Handle relative and absolute paths
-        todo!("Implement cd command")
+        let target_dir = if args.is_empty() {
+            std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+        } else {
+            args[0].clone()
+        };
+
+        match std::env::set_current_dir(&target_dir) {
+            Ok(()) => Ok(()),
+            Err(e) =>
+                Err(
+                    ShellError::FileSystemError(
+                        format!("Failed to change directory to '{}': {}", target_dir, e)
+                    )
+                ),
+        }
     }
 
     fn help(&self) -> &str {
