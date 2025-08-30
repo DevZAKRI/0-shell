@@ -58,7 +58,14 @@ impl CommandParser {
                             current_part.push('\\');
                         }
                     } else {
-                        current_part.push(ch);
+                        if let Some(next_ch) = chars.next() {
+                            match next_ch {
+                                ' ' => {
+                                    current_part.push(' ');
+                                }
+                                _ => current_part.push(ch),
+                            }
+                        }
                     }
                 }
                 ' ' | '\t' => {
@@ -79,12 +86,18 @@ impl CommandParser {
 
         if in_quotes {
             print!("> ");
-            io::stdout().flush().map_err(|e| ShellError::IoError(e))?;
+            io
+                ::stdout()
+                .flush()
+                .map_err(|e| ShellError::IoError(e))?;
 
             let mut input_continuation = String::new();
 
-            io::stdin().read_line(&mut input_continuation).map_err(|e| ShellError::IoError(e))?;
-            input_continuation.trim().to_string();
+            io
+                ::stdin()
+                .read_line(&mut input_continuation)
+                .map_err(|e| ShellError::IoError(e))?;
+            let input_continuation = input_continuation.trim().to_string();
             let continued_input = format!("{}\n{}\n", trimmed, input_continuation);
             return self.parse(&continued_input);
         }
