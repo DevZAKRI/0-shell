@@ -25,7 +25,7 @@ impl CommandExecutor for PwdCommand {
 
 impl CommandExecutor for CdCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        let target_dir = if args.is_empty() {
+        let target_dir = if args.is_empty() || args[0] == "~" {
             std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
         } else {
             args[0].clone()
