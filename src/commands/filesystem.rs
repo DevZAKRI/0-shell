@@ -1,5 +1,17 @@
 use crate::commands::CommandExecutor;
 use crate::error::ShellError;
+use std::fs;
+use std::io;
+use std::path::Path;
+use std::os::unix::fs::PermissionsExt;
+use std::time::SystemTime;
+use std::os::unix::fs::MetadataExt;
+
+// Standard ls colors
+const RESET: &str = "\x1b[0m";
+const BLUE_BOLD: &str = "\x1b[1;34m";  // Directories (bold blue)
+const GREEN: &str = "\x1b[0;32m";      // Executables
+const CYAN: &str = "\x1b[0;36m";       // Symlinks
 
 pub struct PwdCommand;
 pub struct CdCommand;
@@ -9,6 +21,15 @@ pub struct MkdirCommand;
 pub struct CpCommand;
 pub struct MvCommand;
 pub struct RmCommand;
+
+#[derive(Debug)]
+struct LsFlags {
+    show_hidden: bool,
+    long_format: bool,
+    file_indicators: bool,
+}
+
+
 
 impl CommandExecutor for PwdCommand {
     fn execute(&self, _args: &[String]) -> Result<(), ShellError> {
@@ -39,17 +60,396 @@ impl CommandExecutor for CdCommand {
 
 impl CommandExecutor for LsCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement ls command with flags:
-        // - -a: show hidden files
-        // - -l: long format (permissions, size, dates)
-        // - -F: add file type indicators
-        todo!("Implement ls command")
+        let (flags, paths) = self.parse_args(args)?;
+        
+        // If no paths specified, use current directory
+        let paths = if paths.is_empty() {
+            vec![".".to_string()]
+        } else {
+            paths
+        };
+
+        for path in paths {
+            if let Err(e) = self.list_directory(&path, &flags) {
+                eprintln!("ls: {}: {}", path, e);
+            }
+        }
+        
+        Ok(())
     }
 
     fn help(&self) -> &str {
-        "ls [-a] [-l] [-F] - List directory contents"
+        "ls [-a] [-l] [-F] [directory...] - List directory contents"
     }
 }
+
+impl LsCommand {
+    fn get_owner_name(&self, uid: u32) -> String {
+        // Try to get username from /etc/passwd or use UID as fallback
+        match std::fs::read_to_string("/etc/passwd") {
+            Ok(content) => {
+                for line in content.lines() {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    if parts.len() >= 3 {
+                        if let Ok(line_uid) = parts[2].parse::<u32>() {
+                            if line_uid == uid {
+                                return parts[0].to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+        uid.to_string()
+    }
+
+    fn get_group_name(&self, gid: u32) -> String {
+        // Try to get group name from /etc/group or use GID as fallback
+        match std::fs::read_to_string("/etc/group") {
+            Ok(content) => {
+                for line in content.lines() {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    if parts.len() >= 3 {
+                        if let Ok(line_gid) = parts[2].parse::<u32>() {
+                            if line_gid == gid {
+                                return parts[0].to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+        gid.to_string()
+    }
+
+    fn parse_args(&self, args: &[String]) -> Result<(LsFlags, Vec<String>), ShellError> {
+        let mut flags = LsFlags {
+            show_hidden: false,
+            long_format: false,
+            file_indicators: false,
+        };
+        let mut paths = Vec::new();
+
+        for arg in args {
+            if arg.starts_with('-') {
+                if arg == "-" {
+                    // Single dash is treated as a path
+                    paths.push(arg.clone());
+                } else {
+                    // Parse flags
+                    for c in arg[1..].chars() {
+                        match c {
+                            'a' => flags.show_hidden = true,
+                            'l' => flags.long_format = true,
+                            'F' => flags.file_indicators = true,
+                            _ => {
+                                return Err(ShellError::ExecutionError(
+                                    format!("ls: invalid option -- '{}'", c)
+                                ));
+                            }
+                        }
+                    }
+                }
+            } else {
+                paths.push(arg.clone());
+            }
+        }
+
+        Ok((flags, paths))
+    }
+
+    fn list_directory(&self, path_str: &str, flags: &LsFlags) -> Result<(), ShellError> {
+        let path = Path::new(path_str);
+        
+        // Check if path exists
+        if !path.exists() {
+            return Err(ShellError::FileSystemError("No such file or directory".to_string()));
+        }
+
+        // Check if it's a directory
+        if !path.is_dir() {
+            return Err(ShellError::FileSystemError("Not a directory".to_string()));
+        }
+
+        // Read directory contents
+        let entries = fs::read_dir(path)
+            .map_err(|e| {
+                match e.kind() {
+                    io::ErrorKind::PermissionDenied => {
+                        ShellError::FileSystemError("Permission denied".to_string())
+                    }
+                    io::ErrorKind::NotFound => {
+                        ShellError::FileSystemError("No such file or directory".to_string())
+                    }
+                    _ => ShellError::FileSystemError(format!("Cannot read directory: {}", e))
+                }
+            })?;
+
+        let mut files = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(entry) => {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    
+                    // Skip hidden files unless -a flag is set
+                    if !flags.show_hidden && name.starts_with('.') {
+                        continue;
+                    }
+                    
+                    files.push(entry);
+                }
+                Err(e) => {
+                    eprintln!("ls: cannot access '{}': {}", path_str, e);
+                }
+            }
+        }
+
+        // Sort files alphabetically (case-insensitive like standard ls)
+        files.sort_by(|a, b| {
+            let name_a = a.file_name().to_string_lossy().to_lowercase();
+            let name_b = b.file_name().to_string_lossy().to_lowercase();
+            name_a.cmp(&name_b)
+        });
+
+        // Print files
+        if flags.long_format {
+            self.print_long_format(&files, flags)?;
+        } else {
+            self.print_simple_format(&files, flags)?;
+        }
+
+        Ok(())
+    }
+
+    fn print_simple_format(&self, files: &[fs::DirEntry], flags: &LsFlags) -> Result<(), ShellError> {
+        for entry in files {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let mut display_name = name.clone();
+            
+            if let Ok(metadata) = entry.metadata() {
+                if flags.file_indicators {
+                    if metadata.is_dir() {
+                        display_name.push('/');
+                    } else if metadata.is_symlink() {
+                        display_name.push('@');
+                    } else if self.is_executable(&metadata) {
+                        display_name.push('*');
+                    }
+                }
+                
+                let color = self.get_color(&metadata);
+                print!("{}{}{}  ", color, display_name, RESET);
+            } else {
+                print!("{}  ", display_name);
+            }
+        }
+        println!();
+        Ok(())
+    }
+
+    fn print_long_format(&self, files: &[fs::DirEntry], flags: &LsFlags) -> Result<(), ShellError> {
+        for entry in files {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let mut display_name = name.clone();
+            
+            if let Ok(metadata) = entry.metadata() {
+                // Permissions
+                let perms = self.format_permissions(&metadata);
+                
+                // Hard links count (simplified for now)
+                let nlink = 1;
+                
+                // Get actual owner and group IDs
+                let uid = metadata.uid();
+                let gid = metadata.gid();
+                let owner = self.get_owner_name(uid);
+                let group = self.get_group_name(gid);
+                
+                // Size
+                let size = metadata.len();
+                
+                // Get the most appropriate time to display
+                // For newer files, show creation time if available, otherwise modified time
+                let time_to_show = metadata.created()
+                    .unwrap_or_else(|_| metadata.modified()
+                        .unwrap_or_else(|_| std::time::SystemTime::now()));
+                let time_str = self.format_time(time_to_show);
+                
+                // File type indicator
+                if flags.file_indicators {
+                    if metadata.is_dir() {
+                        display_name.push('/');
+                    } else if metadata.is_symlink() {
+                        display_name.push('@');
+                    } else if self.is_executable(&metadata) {
+                        display_name.push('*');
+                    }
+                }
+                
+                let color = self.get_color(&metadata);
+                println!("{} {:>4} {} {} {:>8} {} {}{}{}", 
+                    perms, nlink, owner, group, size, time_str, color, display_name, RESET);
+            } else {
+                println!("{}", display_name);
+            }
+        }
+        Ok(())
+    }
+
+    fn get_color(&self, metadata: &fs::Metadata) -> &'static str {
+        if metadata.is_dir() {
+            BLUE_BOLD
+        } else if metadata.is_symlink() {
+            CYAN
+        } else if self.is_executable(metadata) {
+            GREEN
+        } else {
+            RESET
+        }
+    }
+
+    fn format_permissions(&self, metadata: &fs::Metadata) -> String {
+        let mode = metadata.permissions().mode();
+        let mut perms = String::new();
+        
+        // File type
+        if metadata.is_dir() {
+            perms.push('d');
+        } else if metadata.is_symlink() {
+            perms.push('l');
+        } else {
+            perms.push('-');
+        }
+        
+        // Owner permissions
+        perms.push(if mode & 0o400 != 0 { 'r' } else { '-' });
+        perms.push(if mode & 0o200 != 0 { 'w' } else { '-' });
+        
+        // Handle setuid bit (4000) - if set and executable, show 's', if set and not executable, show 'S'
+        if mode & 0o4000 != 0 {
+            perms.push(if mode & 0o100 != 0 { 's' } else { 'S' });
+        } else {
+            perms.push(if mode & 0o100 != 0 { 'x' } else { '-' });
+        }
+        
+        // Group permissions
+        perms.push(if mode & 0o040 != 0 { 'r' } else { '-' });
+        perms.push(if mode & 0o020 != 0 { 'w' } else { '-' });
+        
+        // Handle setgid bit (2000) - if set and executable, show 's', if set and not executable, show 'S'
+        if mode & 0o2000 != 0 {
+            perms.push(if mode & 0o010 != 0 { 's' } else { 'S' });
+        } else {
+            perms.push(if mode & 0o010 != 0 { 'x' } else { '-' });
+        }
+        
+        // Other permissions
+        perms.push(if mode & 0o004 != 0 { 'r' } else { '-' });
+        perms.push(if mode & 0o002 != 0 { 'w' } else { '-' });
+        
+        // Handle sticky bit (1000) - if set and executable, show 't', if set and not executable, show 'T'
+        if mode & 0o1000 != 0 {
+            perms.push(if mode & 0o001 != 0 { 't' } else { 'T' });
+        } else {
+            perms.push(if mode & 0o001 != 0 { 'x' } else { '-' });
+        }
+        
+        perms
+    }
+
+    fn format_time(&self, time: SystemTime) -> String {
+        let now = SystemTime::now();
+        let duration = now.duration_since(time).unwrap_or_default();
+        
+        // If file is older than 6 months, show year instead of time
+        let six_months = std::time::Duration::from_secs(6 * 30 * 24 * 60 * 60);
+        
+        // Convert SystemTime to timestamp for formatting
+        let timestamp = time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        let secs = timestamp.as_secs();
+        
+        // Simple time formatting using standard library
+        if duration > six_months {
+            // Show year for old files: "Jan 01  2024"
+            self.format_date_with_year(secs)
+        } else {
+            // Show time for recent files: "Jan 01 12:00"
+            self.format_date_with_time(secs)
+        }
+    }
+
+    fn format_date_with_year(&self, secs: u64) -> String {
+        let (month, day, year) = self.seconds_to_date(secs);
+        let month_name = self.month_to_name(month);
+        format!("{} {:2}  {}", month_name, day, year)
+    }
+
+    fn format_date_with_time(&self, secs: u64) -> String {
+        let (month, day, _) = self.seconds_to_date(secs);
+        let month_name = self.month_to_name(month);
+        let hours = (secs % (24 * 60 * 60)) / (60 * 60);
+        let minutes = (secs % (60 * 60)) / 60;
+        
+        format!("{} {:2} {:02}:{:02}", month_name, day, hours, minutes)
+    }
+
+    fn seconds_to_date(&self, secs: u64) -> (u32, u32, u32) {
+        let mut days = secs / (24 * 60 * 60);
+        let mut year = 1970;
+        
+        // Account for leap years
+        while days >= self.days_in_year(year) {
+            days -= self.days_in_year(year);
+            year += 1;
+        }
+        
+        let mut month = 1;
+        let mut day = days as u32;
+        
+        // Calculate month and day
+        while day >= self.days_in_month(year, month) {
+            day -= self.days_in_month(year, month);
+            month += 1;
+        }
+        
+        (month, day + 1, year) // +1 because day 0 is January 1st
+    }
+
+    fn days_in_year(&self, year: u32) -> u64 {
+        if self.is_leap_year(year) { 366 } else { 365 }
+    }
+
+    fn is_leap_year(&self, year: u32) -> bool {
+        (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))
+    }
+
+    fn days_in_month(&self, year: u32, month: u32) -> u32 {
+        match month {
+            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+            4 | 6 | 9 | 11 => 30,
+            2 => if self.is_leap_year(year) { 29 } else { 28 },
+            _ => 30,
+        }
+    }
+
+    fn month_to_name(&self, month: u32) -> &'static str {
+        match month {
+            1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
+            5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
+            9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+            _ => "Jan",
+        }
+    }
+
+    fn is_executable(&self, metadata: &fs::Metadata) -> bool {
+        let mode = metadata.permissions().mode();
+        mode & 0o111 != 0
+    }
+}
+
+
 
 impl CommandExecutor for CatCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
