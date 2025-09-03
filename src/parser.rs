@@ -1,6 +1,4 @@
 use crate::error::ShellError;
-use std::io;
-use std::io::Write;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Command {
