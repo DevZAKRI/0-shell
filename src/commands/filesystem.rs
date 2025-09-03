@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::FileTypeExt;
 use std::time::SystemTime;
 use std::os::unix::fs::MetadataExt;
 
@@ -84,6 +85,61 @@ impl CommandExecutor for LsCommand {
 }
 
 impl LsCommand {
+    fn print_total(&self, dir: &Path, files: &[fs::DirEntry], flags: &LsFlags) -> Result<(), ShellError> {
+        let mut blocks: u64 = 0;
+        // Include . and .. when -a
+        if flags.show_hidden {
+            if let Ok(meta) = fs::symlink_metadata(dir.join(".")) { blocks = blocks.saturating_add(meta.blocks()); }
+            if let Ok(meta) = fs::symlink_metadata(dir.join("..")) { blocks = blocks.saturating_add(meta.blocks()); }
+        }
+        for entry in files {
+            if let Ok(meta) = fs::symlink_metadata(entry.path()) {
+                blocks = blocks.saturating_add(meta.blocks());
+            }
+        }
+        // st_blocks are 512-byte blocks; GNU ls prints in 1K blocks by default
+        let total_k = (blocks + 1) / 2;
+        println!("total {}", total_k);
+        Ok(())
+    }
+
+    fn print_one_long(&self, dir: &Path, name: &str, flags: &LsFlags) -> Result<(), ShellError> {
+        let full = dir.join(name);
+        let meta = fs::symlink_metadata(&full).map_err(|e| ShellError::FileSystemError(e.to_string()))?;
+        let perms = self.format_permissions(&meta);
+        let nlink = 1; // simplified
+        let owner = self.get_owner_name(meta.uid());
+        let group = self.get_group_name(meta.gid());
+        let ftype = meta.file_type();
+        let size_field = if ftype.is_char_device() || ftype.is_block_device() {
+            let (maj, min) = self.major_minor(meta.rdev());
+            format!("{:>3}, {:>3}", maj, min)
+        } else {
+            format!("{:>8}", meta.len())
+        };
+        let time_to_show = meta.created().unwrap_or_else(|_| meta.modified().unwrap_or_else(|_| SystemTime::now()));
+        let time_str = self.format_time(time_to_show);
+        let color = self.get_color(&meta);
+        let mut display_name = name.to_string();
+        if flags.file_indicators {
+            if ftype.is_dir() { display_name.push('/'); }
+            else if ftype.is_symlink() { display_name.push('@'); }
+            else if ftype.is_fifo() { display_name.push('|'); }
+            else if ftype.is_socket() { display_name.push('='); }
+            else if self.is_executable(&meta) { display_name.push('*'); }
+        }
+        let link_suffix = if ftype.is_symlink() {
+            match fs::read_link(&full) { Ok(t) => format!(" -> {}", t.display()), Err(_) => String::from(" -> (broken)") }
+        } else { String::new() };
+        println!("{} {:>4} {} {} {} {} {}{}{}{}", perms, nlink, owner, group, size_field, time_str, color, display_name, RESET, link_suffix);
+        Ok(())
+    }
+    fn major_minor(&self, rdev: u64) -> (u32, u32) {
+        // Linux device encoding per sysmacros.h
+        let major = ((rdev >> 8) & 0xfff) as u32;
+        let minor = ((rdev & 0xff) | ((rdev >> 12) & 0xfffff00)) as u32;
+        (major, minor)
+    }
     fn get_owner_name(&self, uid: u32) -> String {
         // Try to get username from /etc/passwd or use UID as fallback
         match std::fs::read_to_string("/etc/passwd") {
@@ -215,6 +271,13 @@ impl LsCommand {
 
         // Print files
         if flags.long_format {
+            // Print total line first
+            self.print_total(path, &files, flags)?;
+            // Include . and .. before listing entries when showing hidden
+            if flags.show_hidden {
+                self.print_one_long(path, ".", flags)?;
+                self.print_one_long(path, "..", flags)?;
+            }
             self.print_long_format(&files, flags)?;
         } else {
             self.print_simple_format(&files, flags)?;
@@ -230,10 +293,15 @@ impl LsCommand {
             
             if let Ok(metadata) = entry.metadata() {
                 if flags.file_indicators {
-                    if metadata.is_dir() {
+                    let ftype = metadata.file_type();
+                    if ftype.is_dir() {
                         display_name.push('/');
-                    } else if metadata.is_symlink() {
+                    } else if ftype.is_symlink() {
                         display_name.push('@');
+                    } else if ftype.is_fifo() {
+                        display_name.push('|');
+                    } else if ftype.is_socket() {
+                        display_name.push('=');
                     } else if self.is_executable(&metadata) {
                         display_name.push('*');
                     }
@@ -267,8 +335,14 @@ impl LsCommand {
                 let owner = self.get_owner_name(uid);
                 let group = self.get_group_name(gid);
                 
-                // Size
-                let size = metadata.len();
+                // Size or device numbers
+                let ftype = metadata.file_type();
+                let size_field = if ftype.is_char_device() || ftype.is_block_device() {
+                    let (maj, min) = self.major_minor(metadata.rdev());
+                    format!("{:>3}, {:>3}", maj, min)
+                } else {
+                    format!("{:>8}", metadata.len())
+                };
                 
                 // Get the most appropriate time to display
                 // For newer files, show creation time if available, otherwise modified time
@@ -279,18 +353,33 @@ impl LsCommand {
                 
                 // File type indicator
                 if flags.file_indicators {
-                    if metadata.is_dir() {
+                    let ftype = metadata.file_type();
+                    if ftype.is_dir() {
                         display_name.push('/');
-                    } else if metadata.is_symlink() {
+                    } else if ftype.is_symlink() {
                         display_name.push('@');
+                    } else if ftype.is_fifo() {
+                        display_name.push('|');
+                    } else if ftype.is_socket() {
+                        display_name.push('=');
                     } else if self.is_executable(&metadata) {
                         display_name.push('*');
                     }
                 }
                 
+                // If symlink, append " -> target" like ls -l
+                let link_suffix = if ftype.is_symlink() {
+                    match std::fs::read_link(entry.path()) {
+                        Ok(target) => format!(" -> {}", target.display()),
+                        Err(_) => String::from(" -> (broken)"),
+                    }
+                } else {
+                    String::new()
+                };
+
                 let color = self.get_color(&metadata);
-                println!("{} {:>4} {} {} {:>8} {} {}{}{}", 
-                    perms, nlink, owner, group, size, time_str, color, display_name, RESET);
+                println!("{} {:>4} {} {} {} {} {}{}{}{}", 
+                    perms, nlink, owner, group, size_field, time_str, color, display_name, RESET, link_suffix);
             } else {
                 println!("{}", display_name);
             }
@@ -314,11 +403,20 @@ impl LsCommand {
         let mode = metadata.permissions().mode();
         let mut perms = String::new();
         
-        // File type
-        if metadata.is_dir() {
+        // File type (matches ls -l leading character)
+        let ftype = metadata.file_type();
+        if ftype.is_dir() {
             perms.push('d');
-        } else if metadata.is_symlink() {
+        } else if ftype.is_symlink() {
             perms.push('l');
+        } else if ftype.is_char_device() {
+            perms.push('c');
+        } else if ftype.is_block_device() {
+            perms.push('b');
+        } else if ftype.is_fifo() {
+            perms.push('p');
+        } else if ftype.is_socket() {
+            perms.push('s');
         } else {
             perms.push('-');
         }
