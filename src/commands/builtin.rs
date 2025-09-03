@@ -17,7 +17,7 @@ impl CommandExecutor for EchoCommand {
     fn help(&self) -> &str {
         "echo [text] - Display a line of text"
     }
-}
+} 
 
 impl CommandExecutor for ExitCommand {
     fn execute(&self, _args: &[String]) -> Result<(), ShellError> {
