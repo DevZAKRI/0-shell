@@ -6,10 +6,12 @@ pub struct ExitCommand;
 
 impl CommandExecutor for EchoCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement echo command
-        // - Display arguments joined by spaces
-        // - Handle empty arguments (print newline)
-        todo!("Implement echo command")
+        if args.is_empty() {
+            println!();
+        } else {
+            println!("{}", args.join(" "));
+        }
+        Ok(())
     }
 
     fn help(&self) -> &str {
