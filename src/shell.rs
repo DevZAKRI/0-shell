@@ -18,11 +18,9 @@ impl Shell {
 
     pub fn run(&mut self) -> Result<(), ShellError> {
         loop {
+            self.display_prompt()?;
             
-            self.display_prompt()?; // "$ ola libghit tb9a tban dima"
-            
-           
-            let input = self.read_input()?;
+            let input = self.read_complete_input()?;
             
             // Handle EOF (Ctrl+D)
             if input.is_empty() {
@@ -45,6 +43,12 @@ impl Shell {
         Ok(())
     }
 
+    fn display_continuation_prompt(&self) -> Result<(), ShellError> {
+        print!("> ");
+        io::stdout().flush().map_err(|e| ShellError::IoError(e))?;
+        Ok(())
+    }
+
     fn read_input(&self) -> Result<String, ShellError> {
         let mut input = String::new();
         io::stdin()
@@ -52,6 +56,35 @@ impl Shell {
             .map_err(|e| ShellError::IoError(e))?;
         
         Ok(input.trim().to_string())
+    }
+
+    fn read_complete_input(&self) -> Result<String, ShellError> {
+        let mut complete_input = String::new();
+        
+        loop {
+            let input = self.read_input()?;
+            complete_input.push_str(&input);
+            complete_input.push(' '); // Add space between lines
+            
+            // Try to parse the input to check if it's complete
+            match self.parser.parse(&complete_input) {
+                Ok(_) => {
+                    // Input is complete, break out of the loop
+                    break;
+                }
+                Err(ShellError::IncompleteInput(_)) => {
+                    // Input is incomplete, continue reading
+                    self.display_continuation_prompt()?;
+                    continue;
+                }
+                Err(e) => {
+                    // Some other error, return it
+                    return Err(e);
+                }
+            }
+        }
+        
+        Ok(complete_input.trim().to_string())
     }
 
     fn execute_command(&mut self, input: &str) -> Result<(), ShellError> {

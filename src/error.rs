@@ -1,6 +1,7 @@
 use std::io;
 use std::fmt;
 
+
 #[derive(Debug)]
 pub enum ShellError {
     IoError(io::Error),
@@ -8,6 +9,7 @@ pub enum ShellError {
     CommandNotFound(String),
     ExecutionError(String),
     FileSystemError(String),
+    IncompleteInput(char), // For unclosed quotes
 }
 
 impl fmt::Display for ShellError {
@@ -18,6 +20,7 @@ impl fmt::Display for ShellError {
             ShellError::CommandNotFound(cmd) => write!(f, "Command '{}' not found", cmd),
             ShellError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
             ShellError::FileSystemError(msg) => write!(f, "File system error: {}", msg),
+            ShellError::IncompleteInput(ch) => write!(f, "Incomplete input: unclosed quote '{}'", ch),
         }
     }
 }

@@ -773,7 +773,7 @@ impl CommandExecutor for MvCommand {
             return Err(ShellError::ExecutionError("mv: missing operand".to_string()));
         }
         // Last argument = destination
-        let mut filtered = args;
+        let filtered = args;
         let target = Path::new(&filtered[filtered.len() - 1]);
         let sources = &filtered[..filtered.len() - 1];
 
