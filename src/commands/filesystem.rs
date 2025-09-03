@@ -13,6 +13,7 @@ const RESET: &str = "\x1b[0m";
 const BLUE_BOLD: &str = "\x1b[1;34m";  // Directories (bold blue)
 const GREEN: &str = "\x1b[0;32m";      // Executables
 const CYAN: &str = "\x1b[0;36m";       // Symlinks
+use std::env;
 
 pub struct PwdCommand;
 pub struct CdCommand;
@@ -33,11 +34,13 @@ struct LsFlags {
 
 
 impl CommandExecutor for PwdCommand {
-    fn execute(&self, _args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement pwd command
-        // - Get current working directory
-        // - Print to stdout
-        todo!("Implement pwd command")
+    fn execute(&self, args: &[String]) -> Result<(), ShellError> {
+        if args.len() > 0 {
+            return Err(ShellError::ExecutionError("pwd: too many arguments".to_string()));
+        }
+        
+        println!("{}", env::current_dir()?.display());
+        Ok(())
     }
 
     fn help(&self) -> &str {
