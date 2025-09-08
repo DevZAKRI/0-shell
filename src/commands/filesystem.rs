@@ -35,10 +35,6 @@ struct LsFlags {
 
 impl CommandExecutor for PwdCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        if args.len() > 0 {
-            return Err(ShellError::ExecutionError("pwd: too many arguments".to_string()));
-        }
-        
         println!("{}", env::current_dir()?.display());
         Ok(())
     }
