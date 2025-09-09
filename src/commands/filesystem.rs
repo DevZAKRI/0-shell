@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::FileTypeExt;
 use std::time::SystemTime;
 use std::os::unix::fs::MetadataExt;
+use std::process::Command;
 
 // Standard ls colors
 const RESET: &str = "\x1b[0m";
@@ -106,7 +107,7 @@ impl LsCommand {
     fn print_one_long(&self, dir: &Path, name: &str, flags: &LsFlags) -> Result<(), ShellError> {
         let full = dir.join(name);
         let meta = fs::symlink_metadata(&full).map_err(|e| ShellError::FileSystemError(e.to_string()))?;
-        let perms = self.format_permissions(&meta);
+        let perms = self.format_permissions_with_extended(&meta, &full);
         let nlink = meta.nlink();
         let owner = self.get_owner_name(meta.uid());
         let group = self.get_group_name(meta.gid());
@@ -325,7 +326,7 @@ impl LsCommand {
             
             if let Ok(metadata) = entry.metadata() {
                 // Permissions
-                let perms = self.format_permissions(&metadata);
+                let perms = self.format_permissions_with_extended(&metadata, &entry.path());
                 
                 // Hard links count
                 let nlink = metadata.nlink();
@@ -455,6 +456,71 @@ impl LsCommand {
         }
         
         perms
+    }
+
+    fn format_permissions_with_extended(&self, metadata: &fs::Metadata, path: &Path) -> String {
+        let mut perms = self.format_permissions(metadata);
+        
+        // Check for extended attributes or ACLs
+        if self.has_extended_attributes(path) {
+            perms.push('+');
+        }
+        
+        perms
+    }
+
+    fn has_extended_attributes(&self, path: &Path) -> bool {
+        // Try to detect extended attributes using system commands
+        // First try getfacl (for ACLs)
+        if let Ok(output) = Command::new("getfacl")
+            .arg(path)
+            .output()
+        {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                // Check if there are any user-specific or group-specific ACL entries
+                // Standard ACLs only have user::, group::, and other:: entries
+                // Extended ACLs have additional user:username: or group:groupname: entries
+                for line in output_str.lines() {
+                    if line.starts_with("user:") && !line.starts_with("user::") {
+                        return true; // Found user-specific ACL
+                    }
+                    if line.starts_with("group:") && !line.starts_with("group::") {
+                        return true; // Found group-specific ACL
+                    }
+                    if line.starts_with("mask::") {
+                        return true; // Found ACL mask
+                    }
+                }
+            }
+        }
+        
+        // Try lsattr to check for extended attributes (Linux-specific)
+        if let Ok(output) = Command::new("lsattr")
+            .arg(path)
+            .output()
+        {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                if let Some(line) = output_str.lines().next() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let flags = parts[0];
+                        // Only check for specific extended attribute flags
+                        // Standard flags like 'e' (extent-based allocation) are not extended attributes
+                        // Extended attributes are typically things like 'i' (immutable), 'a' (append-only), etc.
+                        // But we need to be careful - only some flags indicate extended attributes
+                        let extended_flags = ['i', 'a', 'j', 's', 't', 'u', 'A', 'S', 'T', 'D'];
+                        if flags.chars().any(|c| extended_flags.contains(&c)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // No extended attributes detected
+        false
     }
 
     fn format_time(&self, time: SystemTime) -> String {
