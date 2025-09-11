@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::FileTypeExt;
 use std::time::SystemTime;
 use std::os::unix::fs::MetadataExt;
+use std::process::Command;
 
 // Standard ls colors
 const RESET: &str = "\x1b[0m";
@@ -117,8 +118,8 @@ impl LsCommand {
     fn print_one_long(&self, dir: &Path, name: &str, flags: &LsFlags) -> Result<(), ShellError> {
         let full = dir.join(name);
         let meta = fs::symlink_metadata(&full).map_err(|e| ShellError::FileSystemError(e.to_string()))?;
-        let perms = self.format_permissions(&meta);
-        let nlink = 1; // simplified
+        let perms = self.format_permissions_with_extended(&meta, &full);
+        let nlink = meta.nlink();
         let owner = self.get_owner_name(meta.uid());
         let group = self.get_group_name(meta.gid());
         let ftype = meta.file_type();
@@ -128,7 +129,7 @@ impl LsCommand {
         } else {
             format!("{:>8}", meta.len())
         };
-        let time_to_show = meta.created().unwrap_or_else(|_| meta.modified().unwrap_or_else(|_| SystemTime::now()));
+        let time_to_show = meta.modified().unwrap_or_else(|_| SystemTime::now());
         let time_str = self.format_time(time_to_show);
         let color = self.get_color(&meta);
         let mut display_name = name.to_string();
@@ -336,10 +337,10 @@ impl LsCommand {
             
             if let Ok(metadata) = entry.metadata() {
                 // Permissions
-                let perms = self.format_permissions(&metadata);
+                let perms = self.format_permissions_with_extended(&metadata, &entry.path());
                 
-                // Hard links count (simplified for now)
-                let nlink = 1;
+                // Hard links count
+                let nlink = metadata.nlink();
                 
                 // Get actual owner and group IDs
                 let uid = metadata.uid();
@@ -357,10 +358,9 @@ impl LsCommand {
                 };
                 
                 // Get the most appropriate time to display
-                // For newer files, show creation time if available, otherwise modified time
-                let time_to_show = metadata.created()
-                    .unwrap_or_else(|_| metadata.modified()
-                        .unwrap_or_else(|_| std::time::SystemTime::now()));
+                // Standard ls shows modification time
+                let time_to_show = metadata.modified()
+                    .unwrap_or_else(|_| std::time::SystemTime::now());
                 let time_str = self.format_time(time_to_show);
                 
                 // File type indicator
@@ -469,6 +469,71 @@ impl LsCommand {
         perms
     }
 
+    fn format_permissions_with_extended(&self, metadata: &fs::Metadata, path: &Path) -> String {
+        let mut perms = self.format_permissions(metadata);
+        
+        // Check for extended attributes or ACLs
+        if self.has_extended_attributes(path) {
+            perms.push('+');
+        }
+        
+        perms
+    }
+
+    fn has_extended_attributes(&self, path: &Path) -> bool {
+        // Try to detect extended attributes using system commands
+        // First try getfacl (for ACLs)
+        if let Ok(output) = Command::new("getfacl")
+            .arg(path)
+            .output()
+        {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                // Check if there are any user-specific or group-specific ACL entries
+                // Standard ACLs only have user::, group::, and other:: entries
+                // Extended ACLs have additional user:username: or group:groupname: entries
+                for line in output_str.lines() {
+                    if line.starts_with("user:") && !line.starts_with("user::") {
+                        return true; // Found user-specific ACL
+                    }
+                    if line.starts_with("group:") && !line.starts_with("group::") {
+                        return true; // Found group-specific ACL
+                    }
+                    if line.starts_with("mask::") {
+                        return true; // Found ACL mask
+                    }
+                }
+            }
+        }
+        
+        // Try lsattr to check for extended attributes (Linux-specific)
+        if let Ok(output) = Command::new("lsattr")
+            .arg(path)
+            .output()
+        {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                if let Some(line) = output_str.lines().next() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let flags = parts[0];
+                        // Only check for specific extended attribute flags
+                        // Standard flags like 'e' (extent-based allocation) are not extended attributes
+                        // Extended attributes are typically things like 'i' (immutable), 'a' (append-only), etc.
+                        // But we need to be careful - only some flags indicate extended attributes
+                        let extended_flags = ['i', 'a', 'j', 's', 't', 'u', 'A', 'S', 'T', 'D'];
+                        if flags.chars().any(|c| extended_flags.contains(&c)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // No extended attributes detected
+        false
+    }
+
     fn format_time(&self, time: SystemTime) -> String {
         let now = SystemTime::now();
         let duration = now.duration_since(time).unwrap_or_default();
@@ -497,10 +562,16 @@ impl LsCommand {
     }
 
     fn format_date_with_time(&self, secs: u64) -> String {
-        let (month, day, _) = self.seconds_to_date(secs);
+        // Get timezone offset and apply it
+        let timezone_offset = self.get_timezone_offset();
+        let local_secs = (secs as i64 + timezone_offset) as u64;
+        
+        // Use local seconds for date calculation too
+        let (month, day, _) = self.seconds_to_date(local_secs);
         let month_name = self.month_to_name(month);
-        let hours = (secs % (24 * 60 * 60)) / (60 * 60);
-        let minutes = (secs % (60 * 60)) / 60;
+        
+        let hours = (local_secs % (24 * 60 * 60)) / (60 * 60);
+        let minutes = (local_secs % (60 * 60)) / 60;
         
         format!("{} {:2} {:02}:{:02}", month_name, day, hours, minutes)
     }
@@ -556,6 +627,58 @@ impl LsCommand {
     fn is_executable(&self, metadata: &fs::Metadata) -> bool {
         let mode = metadata.permissions().mode();
         mode & 0o111 != 0
+    }
+
+    // Timezone detection methods
+    fn get_timezone_offset(&self) -> i64 {
+        // Method 1: Try to read from environment
+        if let Ok(tz) = std::env::var("TZ") {
+            if let Some(offset) = self.parse_tz_env(&tz) {
+                return offset;
+            }
+        }
+        
+        // Method 2: Try to read from /etc/timezone
+        if let Ok(content) = std::fs::read_to_string("/etc/timezone") {
+            if let Some(offset) = self.parse_timezone_name(&content.trim()) {
+                return offset;
+            }
+        }
+        
+        // Default fallback (adjust based on your location)
+        3600 // UTC+1
+    }
+
+    fn parse_tz_env(&self, tz: &str) -> Option<i64> {
+        // Parse TZ format like "UTC+1" or "CET-1"
+        if tz.starts_with("UTC") {
+            if let Some(offset_str) = tz.strip_prefix("UTC") {
+                if offset_str.is_empty() {
+                    return Some(0);
+                }
+                if let Ok(offset) = offset_str.parse::<i64>() {
+                    return Some(offset * 3600);
+                }
+            }
+        }
+        None
+    }
+
+    fn parse_timezone_name(&self, tz_name: &str) -> Option<i64> {
+        // Common timezone offsets
+        match tz_name {
+            "UTC" => Some(0),
+            "GMT" => Some(0),
+            "CET" => Some(3600), // Central European Time (UTC+1)
+            "CEST" => Some(7200), // Central European Summer Time (UTC+2)
+            "EET" => Some(7200), // Eastern European Time (UTC+2)
+            "EEST" => Some(10800), // Eastern European Summer Time (UTC+3)
+            "EST" => Some(-18000), // Eastern Standard Time (UTC-5)
+            "EDT" => Some(-14400), // Eastern Daylight Time (UTC-4)
+            "PST" => Some(-28800), // Pacific Standard Time (UTC-8)
+            "PDT" => Some(-25200), // Pacific Daylight Time (UTC-7)
+            _ => None,
+        }
     }
 }
 
