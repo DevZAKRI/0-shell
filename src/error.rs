@@ -10,6 +10,7 @@ pub enum ShellError {
     ExecutionError(String),
     FileSystemError(String),
     IncompleteInput(char), // For unclosed quotes
+    InvalidOption(String),
 }
 
 impl fmt::Display for ShellError {
@@ -21,6 +22,7 @@ impl fmt::Display for ShellError {
             ShellError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
             ShellError::FileSystemError(msg) => write!(f, "File system error: {}", msg),
             ShellError::IncompleteInput(ch) => write!(f, "Incomplete input: unclosed quote '{}'", ch),
+            ShellError::InvalidOption(msg) => write!(f, "Invalid option: {}", msg),
         }
     }
 }
