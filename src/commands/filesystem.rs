@@ -77,6 +77,7 @@ impl CommandExecutor for CatCommand {
                     return self.read_from_stdin();
                 }
                 continue;
+                
             }
             if file_path.starts_with('-') && file_path != "-" && command_options.is_option {
                 return Err(ShellError::InvalidOption(file_path.clone()));
