@@ -7,14 +7,14 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::FileTypeExt;
 use std::time::SystemTime;
 use std::os::unix::fs::MetadataExt;
-use std::process::Command;
 use std::ffi::CStr;
+use chrono::{DateTime, Local};
 
 // Standard ls colors
-const RESET: &str = "\x1b[0m";
-const BLUE_BOLD: &str = "\x1b[1;34m";  // Directories (bold blue)
-const GREEN: &str = "\x1b[0;32m";      // Executables
-const CYAN: &str = "\x1b[0;36m";       // Symlinks
+// const RESET: &str = "\x1b[0m";
+// const BLUE_BOLD: &str = "\x1b[1;34m";  // Directories (bold blue)
+// const GREEN: &str = "\x1b[0;32m";      // Executables
+// const CYAN: &str = "\x1b[0;36m";       // Symlinks
 
 pub struct PwdCommand;
 pub struct CdCommand;
@@ -119,19 +119,39 @@ impl LsCommand {
         };
         let time_to_show = meta.modified().unwrap_or_else(|_| SystemTime::now());
         let time_str = self.format_time(time_to_show);
-        let color = self.get_color(&meta);
         let mut display_name = name.to_string();
         if flags.file_indicators {
             if ftype.is_dir() { display_name.push('/'); }
-            else if ftype.is_symlink() { display_name.push('@'); }
+            else if ftype.is_symlink() && !flags.long_format { display_name.push('@'); }  // Only show @ if not long format
             else if ftype.is_fifo() { display_name.push('|'); }
             else if ftype.is_socket() { display_name.push('='); }
-            else if self.is_executable(&meta) { display_name.push('*'); }
+            else if !ftype.is_symlink() && self.is_executable(&meta) { display_name.push('*'); }  // Don't add * to symlinks in long format
         }
         let link_suffix = if ftype.is_symlink() {
-            match fs::read_link(&full) { Ok(t) => format!(" -> {}", t.display()), Err(_) => String::from(" -> (broken)") }
+            match fs::read_link(&full) { 
+                Ok(t) => {
+                    let mut target = t.display().to_string();
+                    // Add file type indicator to the target if -F flag is used
+                    if flags.file_indicators {
+                        if let Ok(target_meta) = fs::metadata(&full) {
+                            let target_type = target_meta.file_type();
+                            if target_type.is_socket() {
+                                target.push('=');
+                            } else if target_type.is_dir() {
+                                target.push('/');
+                            } else if target_type.is_fifo() {
+                                target.push('|');
+                            } else if self.is_executable(&target_meta) {  // Use self.is_executable() method
+                                target.push('*');
+                            }
+                        }
+                    }
+                    format!(" -> {}", target)
+                }, 
+                Err(_) => String::from(" -> (broken)") 
+            }
         } else { String::new() };
-        println!("{} {:>4} {} {} {} {} {}{}{}{}", perms, nlink, owner, group, size_field, time_str, color, display_name, RESET, link_suffix);
+        println!("{} {:>4} {} {} {} {} {}{}", perms, nlink, owner, group, size_field, time_str, display_name, link_suffix);
         Ok(())
     }
     fn major_minor(&self, rdev: u64) -> (u32, u32) {
@@ -258,10 +278,8 @@ impl LsCommand {
     }
 
     fn list_file(&self, path: &Path, flags: &LsFlags) -> Result<(), ShellError> {
-        let name = path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
+        // Use the full path instead of just the filename
+        let name = path.to_string_lossy().to_string();
 
         if flags.long_format {
             self.print_one_long(path.parent().unwrap_or(Path::new(".")), &name, flags)?;
@@ -273,9 +291,8 @@ impl LsCommand {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
                         display_name.push('/');
-                    } else if ftype.is_symlink() {
-                        display_name.push('@');
-                    } else if ftype.is_fifo() {
+                    } else if ftype.is_symlink() && !flags.long_format { display_name.push('@'); }
+                    else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
                         display_name.push('=');
@@ -284,10 +301,9 @@ impl LsCommand {
                     }
                 }
                 
-                let color = self.get_color(&metadata);
-                println!("{}{}{}", color, display_name, RESET);
+                println!("{display_name}");
             } else {
-                println!("{}", display_name);
+                println!("{display_name}");
             }
         }
         
@@ -359,9 +375,8 @@ impl LsCommand {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
                         display_name.push('/');
-                    } else if ftype.is_symlink() {
-                        display_name.push('@');
-                    } else if ftype.is_fifo() {
+                    } else if ftype.is_symlink() && !flags.long_format { display_name.push('@'); } // Only show @ if not long format
+                    else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
                         display_name.push('=');
@@ -370,8 +385,7 @@ impl LsCommand {
                     }
                 }
                 
-                let color = self.get_color(&metadata);
-                print!("{}{}{}  ", color, display_name, RESET);
+                print!("{}  ", display_name);
             } else {
                 print!("{}  ", display_name);
             }
@@ -418,9 +432,8 @@ impl LsCommand {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
                         display_name.push('/');
-                    } else if ftype.is_symlink() {
-                        display_name.push('@');
-                    } else if ftype.is_fifo() {
+                    } else if ftype.is_symlink() && !flags.long_format { display_name.push('@'); } // Only show @ if not long format
+                    else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
                         display_name.push('=');
@@ -439,26 +452,13 @@ impl LsCommand {
                     String::new()
                 };
 
-                let color = self.get_color(&metadata);
-                println!("{} {:>4} {} {} {} {} {}{}{}{}", 
-                    perms, nlink, owner, group, size_field, time_str, color, display_name, RESET, link_suffix);
+                println!("{} {:>4} {} {} {} {} {}{}", 
+                    perms, nlink, owner, group, size_field, time_str, display_name, link_suffix);
             } else {
                 println!("{}", display_name);
             }
         }
         Ok(())
-    }
-
-    fn get_color(&self, metadata: &fs::Metadata) -> &'static str {
-        if metadata.is_dir() {
-            BLUE_BOLD
-        } else if metadata.is_symlink() {
-            CYAN
-        } else if self.is_executable(metadata) {
-            GREEN
-        } else {
-            RESET
-        }
     }
 
     fn format_permissions(&self, metadata: &fs::Metadata) -> String {
@@ -530,204 +530,63 @@ impl LsCommand {
     }
 
     fn has_extended_attributes(&self, path: &Path) -> bool {
-        // Try to detect extended attributes using system commands
-        // First try getfacl (for ACLs)
-        if let Ok(output) = Command::new("getfacl")
-            .arg(path)
-            .output()
-        {
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                // Check if there are any user-specific or group-specific ACL entries
-                // Standard ACLs only have user::, group::, and other:: entries
-                // Extended ACLs have additional user:username: or group:groupname: entries
-                for line in output_str.lines() {
-                    if line.starts_with("user:") && !line.starts_with("user::") {
-                        return true; // Found user-specific ACL
-                    }
-                    if line.starts_with("group:") && !line.starts_with("group::") {
-                        return true; // Found group-specific ACL
-                    }
-                    if line.starts_with("mask::") {
-                        return true; // Found ACL mask
+        // Use libc system calls to detect extended attributes
+        // Convert path to C string
+        let path_cstr = match std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        
+        unsafe {
+            let mut buffer = [0u8; 1024];
+            let result = libc::listxattr(
+                path_cstr.as_ptr(),
+                buffer.as_mut_ptr() as *mut i8,
+                buffer.len(),
+            );
+            
+            if result > 0 {
+                let attr_names = std::str::from_utf8(&buffer[..result as usize]).unwrap_or("");
+                for name in attr_names.split('\0') {
+                    if !name.is_empty() && self.is_extended_attribute(name) {
+                        return true;
                     }
                 }
             }
         }
         
-        // Try lsattr to check for extended attributes (Linux-specific)
-        if let Ok(output) = Command::new("lsattr")
-            .arg(path)
-            .output()
-        {
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                if let Some(line) = output_str.lines().next() {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        let flags = parts[0];
-                        // Only check for specific extended attribute flags
-                        // Standard flags like 'e' (extent-based allocation) are not extended attributes
-                        // Extended attributes are typically things like 'i' (immutable), 'a' (append-only), etc.
-                        // But we need to be careful - only some flags indicate extended attributes
-                        let extended_flags = ['i', 'a', 'j', 's', 't', 'u', 'A', 'S', 'T', 'D'];
-                        if flags.chars().any(|c| extended_flags.contains(&c)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // No extended attributes detected
         false
+    }
+    
+    fn is_extended_attribute(&self, name: &str) -> bool {
+        name.starts_with("system.posix_acl_") ||
+        name.starts_with("security.") ||
+        name.starts_with("trusted.") ||
+        name.starts_with("user.") ||
+        name.starts_with("system.") ||
+        name.starts_with("xattr.")
     }
 
     fn format_time(&self, time: SystemTime) -> String {
         let now = SystemTime::now();
         let duration = now.duration_since(time).unwrap_or_default();
         
-        // If file is older than 6 months, show year instead of time
         let six_months = std::time::Duration::from_secs(6 * 30 * 24 * 60 * 60);
         
-        // Convert SystemTime to timestamp for formatting
-        let timestamp = time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-        let secs = timestamp.as_secs();
         
-        // Simple time formatting using standard library
+        let datetime: DateTime<Local> = time.into();
+        
         if duration > six_months {
-            // Show year for old files: "Jan 01  2024"
-            self.format_date_with_year(secs)
+            datetime.format("%b %d  %Y").to_string()
         } else {
-            // Show time for recent files: "Jan 01 12:00"
-            self.format_date_with_time(secs)
-        }
-    }
 
-    fn format_date_with_year(&self, secs: u64) -> String {
-        let (month, day, year) = self.seconds_to_date(secs);
-        let month_name = self.month_to_name(month);
-        format!("{} {:2}  {}", month_name, day, year)
-    }
-
-    fn format_date_with_time(&self, secs: u64) -> String {
-        // Get timezone offset and apply it
-        let timezone_offset = self.get_timezone_offset();
-        let local_secs = (secs as i64 + timezone_offset) as u64;
-        
-        // Use local seconds for date calculation too
-        let (month, day, _) = self.seconds_to_date(local_secs);
-        let month_name = self.month_to_name(month);
-        
-        let hours = (local_secs % (24 * 60 * 60)) / (60 * 60);
-        let minutes = (local_secs % (60 * 60)) / 60;
-        
-        format!("{} {:2} {:02}:{:02}", month_name, day, hours, minutes)
-    }
-
-    fn seconds_to_date(&self, secs: u64) -> (u32, u32, u32) {
-        let mut days = secs / (24 * 60 * 60);
-        let mut year = 1970;
-        
-        // Account for leap years
-        while days >= self.days_in_year(year) {
-            days -= self.days_in_year(year);
-            year += 1;
-        }
-        
-        let mut month = 1;
-        let mut day = days as u32;
-        
-        // Calculate month and day
-        while day >= self.days_in_month(year, month) {
-            day -= self.days_in_month(year, month);
-            month += 1;
-        }
-        
-        (month, day + 1, year) // +1 because day 0 is January 1st
-    }
-
-    fn days_in_year(&self, year: u32) -> u64 {
-        if self.is_leap_year(year) { 366 } else { 365 }
-    }
-
-    fn is_leap_year(&self, year: u32) -> bool {
-        (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))
-    }
-
-    fn days_in_month(&self, year: u32, month: u32) -> u32 {
-        match month {
-            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-            4 | 6 | 9 | 11 => 30,
-            2 => if self.is_leap_year(year) { 29 } else { 28 },
-            _ => 30,
-        }
-    }
-
-    fn month_to_name(&self, month: u32) -> &'static str {
-        match month {
-            1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-            5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-            9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
-            _ => "Jan",
+            datetime.format("%b %d %H:%M").to_string()
         }
     }
 
     fn is_executable(&self, metadata: &fs::Metadata) -> bool {
         let mode = metadata.permissions().mode();
         mode & 0o111 != 0
-    }
-
-    // Timezone detection methods
-    fn get_timezone_offset(&self) -> i64 {
-        // Method 1: Try to read from environment
-        if let Ok(tz) = std::env::var("TZ") {
-            if let Some(offset) = self.parse_tz_env(&tz) {
-                return offset;
-            }
-        }
-        
-        // Method 2: Try to read from /etc/timezone
-        if let Ok(content) = std::fs::read_to_string("/etc/timezone") {
-            if let Some(offset) = self.parse_timezone_name(&content.trim()) {
-                return offset;
-            }
-        }
-        
-        // Default fallback (adjust based on your location)
-        3600 // UTC+1
-    }
-
-    fn parse_tz_env(&self, tz: &str) -> Option<i64> {
-        // Parse TZ format like "UTC+1" or "CET-1"
-        if tz.starts_with("UTC") {
-            if let Some(offset_str) = tz.strip_prefix("UTC") {
-                if offset_str.is_empty() {
-                    return Some(0);
-                }
-                if let Ok(offset) = offset_str.parse::<i64>() {
-                    return Some(offset * 3600);
-                }
-            }
-        }
-        None
-    }
-
-    fn parse_timezone_name(&self, tz_name: &str) -> Option<i64> {
-        // Common timezone offsets
-        match tz_name {
-            "UTC" => Some(0),
-            "GMT" => Some(0),
-            "CET" => Some(3600), // Central European Time (UTC+1)
-            "CEST" => Some(7200), // Central European Summer Time (UTC+2)
-            "EET" => Some(7200), // Eastern European Time (UTC+2)
-            "EEST" => Some(10800), // Eastern European Summer Time (UTC+3)
-            "EST" => Some(-18000), // Eastern Standard Time (UTC-5)
-            "EDT" => Some(-14400), // Eastern Daylight Time (UTC-4)
-            "PST" => Some(-28800), // Pacific Standard Time (UTC-8)
-            "PDT" => Some(-25200), // Pacific Daylight Time (UTC-7)
-            _ => None,
-        }
     }
 }
 
