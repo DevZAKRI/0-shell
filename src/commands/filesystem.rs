@@ -12,6 +12,11 @@ pub struct CpCommand;
 pub struct MvCommand;
 pub struct RmCommand;
 
+pub struct CommandOptions {
+    is_option: bool,
+}
+    
+
 impl CommandExecutor for PwdCommand {
     fn execute(&self, _args: &[String]) -> Result<(), ShellError> {
         // TODO: Implement pwd command
@@ -55,14 +60,27 @@ impl CommandExecutor for LsCommand {
 
 impl CommandExecutor for CatCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
+        let mut command_options = CommandOptions {
+            is_option: true,
+        };
         // If no arguments provided, read from stdin
         if args.is_empty() {
             return self.read_from_stdin();
         }
-
+        
         //let mut has_error = false;
 
         for file_path in args {
+            if file_path == "--" {
+                command_options.is_option = false;
+                if args.len() == 1 {
+                    return self.read_from_stdin();
+                }
+                continue;
+            }
+            if file_path.starts_with('-') && file_path != "-" && command_options.is_option {
+                return Err(ShellError::InvalidOption(file_path.clone()));
+            }
             match self.process_file(file_path) {
                 Ok(_) => {},
                 Err(e) => {
@@ -108,10 +126,11 @@ impl CatCommand {
         Ok(())
     }
 
-    /// Process a single file and write its contents to stdout
     fn process_file(&self, file_path: &str) -> Result<(), ShellError> {
-        // Try to read the file content
-        let content = fs::read_to_string(file_path)
+        if file_path == "-" {
+            return self.read_from_stdin();
+        }
+        let content = fs::read(file_path)
             .map_err(|e| {
                 match e.kind() {
                     io::ErrorKind::NotFound => {
@@ -127,7 +146,8 @@ impl CatCommand {
                 }
             })?;
 
-        print!("{}", content);
+        io::stdout().write_all(&content)
+            .map_err(|e| ShellError::IoError(e))?;
         io::stdout().flush().map_err(|e| ShellError::IoError(e))?;
         
         Ok(())

@@ -8,6 +8,7 @@ pub enum ShellError {
     CommandNotFound(String),
     ExecutionError(String),
     FileSystemError(String),
+    InvalidOption(String),
 }
 
 impl fmt::Display for ShellError {
@@ -18,6 +19,7 @@ impl fmt::Display for ShellError {
             ShellError::CommandNotFound(cmd) => write!(f, "Command '{}' not found", cmd),
             ShellError::ExecutionError(msg) => write!(f, "Execution error: {}", msg),
             ShellError::FileSystemError(msg) => write!(f, "File system error: {}", msg),
+            ShellError::InvalidOption(msg) => write!(f, "Invalid option: {}", msg),
         }
     }
 }
