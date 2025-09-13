@@ -10,3 +10,5 @@ name = "0-shell"
 path = "src/main.rs"
 
 [dependencies]
+chrono = "0.4.42"
+libc = "0.2"

@@ -8,6 +8,7 @@ use std::os::unix::fs::FileTypeExt;
 use std::time::SystemTime;
 use std::os::unix::fs::MetadataExt;
 use std::process::Command;
+use std::ffi::CStr;
 
 // Standard ls colors
 const RESET: &str = "\x1b[0m";
@@ -30,8 +31,6 @@ struct LsFlags {
     long_format: bool,
     file_indicators: bool,
 }
-
-
 
 impl CommandExecutor for PwdCommand {
     fn execute(&self, _args: &[String]) -> Result<(), ShellError> {
@@ -142,42 +141,58 @@ impl LsCommand {
         (major, minor)
     }
     fn get_owner_name(&self, uid: u32) -> String {
-        // Try to get username from /etc/passwd or use UID as fallback
-        match std::fs::read_to_string("/etc/passwd") {
-            Ok(content) => {
-                for line in content.lines() {
-                    let parts: Vec<&str> = line.split(':').collect();
-                    if parts.len() >= 3 {
-                        if let Ok(line_uid) = parts[2].parse::<u32>() {
-                            if line_uid == uid {
-                                return parts[0].to_string();
-                            }
+        // Try using getpwuid system call
+        unsafe {
+            let passwd = libc::getpwuid(uid as libc::uid_t);
+            if !passwd.is_null() {
+                let name = CStr::from_ptr((*passwd).pw_name).to_string_lossy();
+                return name.to_string();
+            }
+        }
+        
+        // Fallback: Try reading /etc/passwd directly
+        if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
+            for line in content.lines() {
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 3 {
+                    if let Ok(line_uid) = parts[2].parse::<u32>() {
+                        if line_uid == uid {
+                            return parts[0].to_string();
                         }
                     }
                 }
             }
-            Err(_) => {}
         }
+        
+        // Final fallback to UID as string
         uid.to_string()
     }
 
     fn get_group_name(&self, gid: u32) -> String {
-        // Try to get group name from /etc/group or use GID as fallback
-        match std::fs::read_to_string("/etc/group") {
-            Ok(content) => {
-                for line in content.lines() {
-                    let parts: Vec<&str> = line.split(':').collect();
-                    if parts.len() >= 3 {
-                        if let Ok(line_gid) = parts[2].parse::<u32>() {
-                            if line_gid == gid {
-                                return parts[0].to_string();
-                            }
+        // Try using getgrgid system call
+        unsafe {
+            let group = libc::getgrgid(gid as libc::gid_t);
+            if !group.is_null() {
+                let name = CStr::from_ptr((*group).gr_name).to_string_lossy();
+                return name.to_string();
+            }
+        }
+        
+        // Fallback: Try reading /etc/group directly
+        if let Ok(content) = std::fs::read_to_string("/etc/group") {
+            for line in content.lines() {
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 3 {
+                    if let Ok(line_gid) = parts[2].parse::<u32>() {
+                        if line_gid == gid {
+                            return parts[0].to_string();
                         }
                     }
                 }
             }
-            Err(_) => {}
         }
+        
+        // Final fallback to GID as string
         gid.to_string()
     }
 
@@ -187,13 +202,18 @@ impl LsCommand {
             long_format: false,
             file_indicators: false,
         };
+
+        let mut is_option = true;
         let mut paths = Vec::new();
 
         for arg in args {
-            if arg.starts_with('-') {
+            if arg.starts_with('-') && is_option {
                 if arg == "-" {
                     // Single dash is treated as a path
                     paths.push(arg.clone());
+                } else if arg == "--" {
+                    is_option = false;
+                    continue; // Skip to next argument
                 } else {
                     // Parse flags
                     for c in arg[1..].chars() {
@@ -226,12 +246,55 @@ impl LsCommand {
             return Err(ShellError::FileSystemError("No such file or directory".to_string()));
         }
 
-        // Check if it's a directory
-        if !path.is_dir() {
-            return Err(ShellError::FileSystemError("Not a directory".to_string()));
+        // Handle files vs directories
+        if path.is_file() {
+            return self.list_file(path, flags);
+        } else if path.is_dir() {
+            return self.list_directory_contents(path, flags);
+        } else {
+            // Handle other file types (symlinks, etc.)
+            return self.list_file(path, flags);
         }
+    }
 
-        // Read directory contents
+    fn list_file(&self, path: &Path, flags: &LsFlags) -> Result<(), ShellError> {
+        let name = path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        if flags.long_format {
+            self.print_one_long(path.parent().unwrap_or(Path::new(".")), &name, flags)?;
+        } else {
+            let mut display_name = name.clone();
+            
+            if let Ok(metadata) = fs::symlink_metadata(path) {
+                if flags.file_indicators {
+                    let ftype = metadata.file_type();
+                    if ftype.is_dir() {
+                        display_name.push('/');
+                    } else if ftype.is_symlink() {
+                        display_name.push('@');
+                    } else if ftype.is_fifo() {
+                        display_name.push('|');
+                    } else if ftype.is_socket() {
+                        display_name.push('=');
+                    } else if self.is_executable(&metadata) {
+                        display_name.push('*');
+                    }
+                }
+                
+                let color = self.get_color(&metadata);
+                println!("{}{}{}", color, display_name, RESET);
+            } else {
+                println!("{}", display_name);
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn list_directory_contents(&self, path: &Path, flags: &LsFlags) -> Result<(), ShellError> {
         let entries = fs::read_dir(path)
             .map_err(|e| {
                 match e.kind() {
@@ -251,7 +314,6 @@ impl LsCommand {
                 Ok(entry) => {
                     let name = entry.file_name().to_string_lossy().to_string();
                     
-                    // Skip hidden files unless -a flag is set
                     if !flags.show_hidden && name.starts_with('.') {
                         continue;
                     }
@@ -259,12 +321,11 @@ impl LsCommand {
                     files.push(entry);
                 }
                 Err(e) => {
-                    eprintln!("ls: cannot access '{}': {}", path_str, e);
+                    eprintln!("ls: cannot access '{}': {}", path.display(), e);
                 }
             }
         }
 
-        // Sort files according to LC_COLLATE (locale-aware collation)
         files.sort_by(|a, b| {
             let name_a = a.file_name().to_string_lossy().to_string().replace(".", "").to_lowercase();
             let name_b = b.file_name().to_string_lossy().to_string().replace(".", "").to_lowercase();
@@ -404,7 +465,6 @@ impl LsCommand {
         let mode = metadata.permissions().mode();
         let mut perms = String::new();
         
-        // File type (matches ls -l leading character)
         let ftype = metadata.file_type();
         if ftype.is_dir() {
             perms.push('d');
