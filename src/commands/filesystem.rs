@@ -72,16 +72,28 @@ impl CommandExecutor for CdCommand {
             }
         }
 
+        let current_dir = std::env
+            ::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+
         let target_dir = if target_dir.is_empty() || target_dir == "~" {
             std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
         } else if target_dir == "-" {
-            std::env::var("OLDPWD").unwrap_or_else(|_| ".".to_string())
+            let oldpwd = std::env::var("OLDPWD").unwrap_or_else(|_| ".".to_string());
+            println!("{}", oldpwd);
+            oldpwd
         } else {
             target_dir
         };
 
         match std::env::set_current_dir(&target_dir) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                unsafe {
+                    std::env::set_var("OLDPWD", current_dir);
+                }
+                Ok(())
+            }
             Err(e) =>
                 Err(
                     ShellError::FileSystemError(
