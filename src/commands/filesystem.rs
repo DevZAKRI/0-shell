@@ -72,20 +72,11 @@ impl CommandExecutor for CdCommand {
             }
         }
 
-        let current_dir = std::env
-            ::current_dir()
+        let current_dir = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| ".".to_string());
 
-        let target_dir = if target_dir.is_empty() || target_dir == "~" {
-            std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
-        } else if target_dir == "-" {
-            let oldpwd = std::env::var("OLDPWD").unwrap_or_else(|_| ".".to_string());
-            println!("{}", oldpwd);
-            oldpwd
-        } else {
-            target_dir
-        };
+        let target_dir = self.resolve_target_directory(&target_dir)?;
 
         match std::env::set_current_dir(&target_dir) {
             Ok(()) => {
@@ -94,17 +85,76 @@ impl CommandExecutor for CdCommand {
                 }
                 Ok(())
             }
-            Err(e) =>
-                Err(
-                    ShellError::FileSystemError(
-                        format!("Failed to change directory to '{}': {}", target_dir, e)
-                    )
-                ),
+            Err(e) => {
+                match e.kind() {
+                    io::ErrorKind::NotFound => {
+                        Err(ShellError::FileSystemError(
+                            format!("cd: {}: No such file or directory", target_dir)
+                        ))
+                    }
+                    io::ErrorKind::PermissionDenied => {
+                        Err(ShellError::FileSystemError(
+                            format!("cd: {}: Permission denied", target_dir)
+                        ))
+                    }
+                    io::ErrorKind::NotADirectory => {
+                        Err(ShellError::FileSystemError(
+                            format!("cd: {}: Not a directory", target_dir)
+                        ))
+                    }
+                    _ => {
+                        Err(ShellError::FileSystemError(
+                            format!("cd: {}: {}", target_dir, e)
+                        ))
+                    }
+                }
+            }
         }
     }
 
     fn help(&self) -> &str {
         "cd [directory] - Change directory"
+    }
+}
+
+impl CdCommand {
+    fn resolve_target_directory(&self, target: &str) -> Result<String, ShellError> {
+        if target.is_empty() {
+            return Ok(self.get_home_directory()?);
+        }
+
+        if target == "~" {
+            return Ok(self.get_home_directory()?);
+        }
+
+        if target.starts_with("~/") {
+            let home = self.get_home_directory()?;
+            let path = target.strip_prefix("~/").unwrap();
+            return Ok(format!("{}/{}", home, path));
+        }
+
+        if target == "-" {
+            return self.get_oldpwd_directory();
+        }
+
+        Ok(target.to_string())
+    }
+
+    fn get_home_directory(&self) -> Result<String, ShellError> {
+        std::env::var("HOME")
+            .map_err(|_| ShellError::FileSystemError(
+                "cd: HOME environment variable not set".to_string()
+            ))
+    }
+
+    fn get_oldpwd_directory(&self) -> Result<String, ShellError> {
+        let oldpwd = std::env::var("OLDPWD")
+            .map_err(|_| ShellError::FileSystemError(
+                "cd: OLDPWD not set".to_string()
+            ))?;
+        
+        println!("{}", oldpwd);
+        Ok(oldpwd)
     }
 }
 
@@ -1005,38 +1055,93 @@ impl CommandExecutor for CpCommand {
         let target = Path::new(filtered.pop().unwrap());
         let sources = filtered;
 
+        let mut has_errors = false;
+        
         for src in sources {
             let src_path = Path::new(src);
 
             if !src_path.exists() {
                 eprintln!("cp: cannot stat '{}': No such file or directory", src);
+                has_errors = true;
+                continue;
+            }
+
+            if !src_path.is_file() && !src_path.is_dir() {
+                eprintln!("cp: cannot copy '{}': Not a regular file or directory", src);
+                has_errors = true;
                 continue;
             }
 
             if src_path.is_dir() {
                 if !recursive {
                     eprintln!("cp: omitting directory '{}', use -r to copy", src);
+                    has_errors = true;
                     continue;
                 }
-                if
-                    let Err(err) = copy_dir_all(
-                        src_path,
-                        &target.join(src_path.file_name().unwrap())
-                    )
-                {
-                    eprintln!("cp: failed to copy directory '{}': {}", src, err);
+                
+                let dest_path = if target.is_dir() {
+                    target.join(src_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("")))
+                } else {
+                    target.to_path_buf()
+                };
+                
+                if dest_path.exists() && dest_path.is_file() {
+                    eprintln!("cp: cannot overwrite non-directory '{}' with directory '{}'", 
+                             dest_path.display(), src);
+                    has_errors = true;
+                    continue;
+                }
+                
+                if let Err(err) = copy_dir_all(src_path, &dest_path) {
+                    match err.kind() {
+                        io::ErrorKind::PermissionDenied => {
+                            eprintln!("cp: cannot copy '{}': Permission denied", src);
+                        }
+                        io::ErrorKind::AlreadyExists => {
+                            eprintln!("cp: cannot copy '{}': Destination already exists", src);
+                        }
+                        _ => {
+                            eprintln!("cp: failed to copy directory '{}': {}", src, err);
+                        }
+                    }
+                    has_errors = true;
                 }
             } else {
                 let dest_path = if target.is_dir() {
-                    target.join(src_path.file_name().unwrap())
+                    target.join(src_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("")))
                 } else {
                     target.to_path_buf()
                 };
 
+                if dest_path.exists() && dest_path.is_dir() {
+                    eprintln!("cp: cannot overwrite directory '{}' with non-directory '{}'", 
+                             dest_path.display(), src);
+                    has_errors = true;
+                    continue;
+                }
+
                 if let Err(err) = fs::copy(src_path, &dest_path) {
-                    eprintln!("cp: failed to copy '{}': {}", src, err);
+                    match err.kind() {
+                        io::ErrorKind::PermissionDenied => {
+                            eprintln!("cp: cannot copy '{}': Permission denied", src);
+                        }
+                        io::ErrorKind::NotFound => {
+                            eprintln!("cp: cannot copy '{}': Destination directory does not exist", src);
+                        }
+                        io::ErrorKind::InvalidInput => {
+                            eprintln!("cp: cannot copy '{}': Invalid input", src);
+                        }
+                        _ => {
+                            eprintln!("cp: failed to copy '{}': {}", src, err);
+                        }
+                    }
+                    has_errors = true;
                 }
             }
+        }
+        
+        if has_errors {
+            return Err(ShellError::ExecutionError("Some files could not be copied".to_string()));
         }
 
         Ok(())
@@ -1057,7 +1162,7 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
 
         if path.is_dir() {
             copy_dir_all(&path, &dst_path)?;
-        } else {
+        } else if path.is_file() {
             fs::copy(&path, &dst_path)?;
         }
     }
@@ -1092,23 +1197,67 @@ impl CommandExecutor for MvCommand {
         let target = Path::new(&filtered[filtered.len() - 1]);
         let sources = &filtered[..filtered.len() - 1];
 
+        let mut has_errors = false;
+        
         for src in sources {
             let src_path = Path::new(src);
 
             if !src_path.exists() {
                 eprintln!("mv: cannot stat '{}': No such file or directory", src);
+                has_errors = true;
+                continue;
+            }
+
+            if !src_path.is_file() && !src_path.is_dir() {
+                eprintln!("mv: cannot move '{}': Not a regular file or directory", src);
+                has_errors = true;
                 continue;
             }
 
             let dest_path = if target.is_dir() {
-                target.join(src_path.file_name().unwrap())
+                target.join(src_path.file_name().unwrap_or_else(|| std::ffi::OsStr::new("")))
             } else {
                 target.to_path_buf()
             };
 
-            if let Err(err) = fs::rename(src_path, &dest_path) {
-                eprintln!("mv: failed to move '{}': {}", src, err);
+            if dest_path.exists() {
+                if dest_path.is_dir() && src_path.is_file() {
+                    eprintln!("mv: cannot overwrite directory '{}' with non-directory '{}'", 
+                             dest_path.display(), src);
+                    has_errors = true;
+                    continue;
+                } else if dest_path.is_file() && src_path.is_dir() {
+                    eprintln!("mv: cannot overwrite non-directory '{}' with directory '{}'", 
+                             dest_path.display(), src);
+                    has_errors = true;
+                    continue;
+                }
             }
+
+            if let Err(err) = fs::rename(src_path, &dest_path) {
+                match err.kind() {
+                    io::ErrorKind::PermissionDenied => {
+                        eprintln!("mv: cannot move '{}': Permission denied", src);
+                    }
+                    io::ErrorKind::NotFound => {
+                        eprintln!("mv: cannot move '{}': Destination directory does not exist", src);
+                    }
+                    io::ErrorKind::InvalidInput => {
+                        eprintln!("mv: cannot move '{}': Invalid input", src);
+                    }
+                    io::ErrorKind::CrossesDevices => {
+                        eprintln!("mv: cannot move '{}': Cross-device link not permitted", src);
+                    }
+                    _ => {
+                        eprintln!("mv: failed to move '{}': {}", src, err);
+                    }
+                }
+                has_errors = true;
+            }
+        }
+        
+        if has_errors {
+            return Err(ShellError::ExecutionError("Some files could not be moved".to_string()));
         }
 
         Ok(())
@@ -1159,13 +1308,23 @@ impl CommandExecutor for RmCommand {
         if targets.is_empty() {
             return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
         }
+        let mut has_errors = false;
+        
         for target in targets {
             let path = Path::new(target);
 
             if !path.exists() {
                 eprintln!("rm: cannot remove '{}': No such file or directory", target);
+                has_errors = true;
                 continue;
             }
+
+            if !path.is_file() && !path.is_dir() {
+                eprintln!("rm: cannot remove '{}': Not a regular file or directory", target);
+                has_errors = true;
+                continue;
+            }
+
             let result = if path.is_dir() {
                 if recursive {
                     fs::remove_dir_all(path)
@@ -1182,8 +1341,26 @@ impl CommandExecutor for RmCommand {
             };
 
             if let Err(err) = result {
-                eprintln!("rm: failed to remove '{}': {}", target, err);
+                match err.kind() {
+                    io::ErrorKind::PermissionDenied => {
+                        eprintln!("rm: cannot remove '{}': Permission denied", target);
+                    }
+                    io::ErrorKind::Other => {
+                        eprintln!("rm: {}", err);
+                    }
+                    io::ErrorKind::InvalidInput => {
+                        eprintln!("rm: cannot remove '{}': Invalid input", target);
+                    }
+                    _ => {
+                        eprintln!("rm: failed to remove '{}': {}", target, err);
+                    }
+                }
+                has_errors = true;
             }
+        }
+        
+        if has_errors {
+            return Err(ShellError::ExecutionError("Some files could not be removed".to_string()));
         }
         Ok(())
     }
