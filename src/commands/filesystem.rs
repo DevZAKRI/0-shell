@@ -1,6 +1,9 @@
 use crate::commands::CommandExecutor;
 use crate::error::ShellError;
+use std::path::Path;
+use std::fs;
 
+use std::env;
 pub struct PwdCommand;
 pub struct CdCommand;
 pub struct LsCommand;
@@ -106,17 +109,78 @@ impl CommandExecutor for MvCommand {
         "mv source destination - Move (rename) files"
     }
 }
-
 impl CommandExecutor for RmCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        // TODO: Implement rm command with -r flag
-        // - Remove files
-        // - Handle -r flag for recursive directory removal
-        // - Handle missing files gracefully
-        todo!("Implement rm command")
+     let pwd = env::current_dir().unwrap().to_string_lossy().to_string(); // current directory as String
+
+
+        if args.is_empty() {
+            return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
+        }
+
+        let mut recursive = false;
+        let mut is_option = true;
+        let mut targets: Vec<&String> = Vec::new();
+
+        for arg in args {
+           
+            if arg.as_str() == pwd {
+                return Err(ShellError::ExecutionError("rm: refusing to remove current directory".to_string()));
+            }
+            if is_dot_or_dotdot(arg) {
+                return Err(
+                    ShellError::ExecutionError("rm: refusing to remove '.' or '..'".to_string())
+                );
+            }
+            if arg == "--" {
+                is_option = false;
+                continue;
+            }
+            if arg == "-r" && is_option {
+                recursive = true;
+            } else if arg.starts_with('-') && is_option {
+                return Err(ShellError::InvalidOption(arg.clone()));
+            } else {
+                targets.push(arg);
+            }
+        }
+
+        if targets.is_empty() {
+            return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
+        }
+        for target in targets {
+            let path = Path::new(target);
+
+            if !path.exists() {
+                eprintln!("rm: cannot remove '{}': No such file or directory", target);
+                continue;
+            }
+            let result = if path.is_dir() {
+                if recursive {
+                    fs::remove_dir_all(path)
+                } else {
+                    Err(
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("rm: cannot remove '{}': Is a directory (use -r)", target)
+                        )
+                    )
+                }
+            } else {
+                fs::remove_file(path)
+            };
+
+            if let Err(err) = result {
+                eprintln!("rm: failed to remove '{}': {}", target, err);
+            }
+        }
+        Ok(())
     }
 
     fn help(&self) -> &str {
         "rm [-r] [file...] - Remove files or directories"
     }
+}
+fn is_dot_or_dotdot(path: &str) -> bool {
+    path == "." || path == ".." || path == "./" || path == "../"
 }
