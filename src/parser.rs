@@ -61,13 +61,16 @@ impl CommandParser {
                                 't' => current_part.push('\t'),
                                 'r' => current_part.push('\r'),
                                 '\\' | '"' | '\'' => current_part.push(next_ch),
+                                '\n' => {
+                                    // Backslash-newline is removed (line continuation)
+                                }
                                 _ => {
                                     current_part.push('\\');
                                     current_part.push(next_ch);
                                 }
                             }
                         } else {
-                            current_part.push('\\');
+                            return Err(ShellError::IncompleteInput('\\'));
                         }
                     } else {
                         if let Some(next_ch) = chars.next() {
@@ -75,10 +78,12 @@ impl CommandParser {
                                 ' ' => {
                                     current_part.push(' ');
                                 }
+                                '\n' => {
+                                    // Backslash-newline is removed (line continuation)
+                                }
                                 _ => current_part.push(next_ch),
                             }
                         } else {
-                            // Backslash at end of input is an error
                             return Err(ShellError::IncompleteInput('\\'));
                         }
                     }

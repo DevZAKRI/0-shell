@@ -11,13 +11,6 @@ use std::ffi::CStr;
 use std::env;
 use chrono::{DateTime, Local};
 
-// Standard ls colors
-// const RESET: &str = "\x1b[0m";
-// const BLUE_BOLD: &str = "\x1b[1;34m";  // Directories (bold blue)
-// const GREEN: &str = "\x1b[0;32m";      // Executables
-// const CYAN: &str = "\x1b[0;36m";       // Symlinks
-
-use std::env;
 pub struct PwdCommand;
 pub struct CdCommand;
 pub struct LsCommand;
