@@ -159,7 +159,7 @@ impl LsCommand {
         let ftype = meta.file_type();
         let size_field = if ftype.is_char_device() || ftype.is_block_device() {
             let (maj, min) = self.major_minor(meta.rdev());
-            format!("{:>3}, {:>3}", maj, min)
+            format!("{:>3}, {:>5}", maj, min)
         } else {
             format!("{:>8}", meta.len())
         };
@@ -197,7 +197,22 @@ impl LsCommand {
                 Err(_) => String::from(" -> (broken)") 
             }
         } else { String::new() };
-        println!("{} {:>4} {} {} {} {} {}{}", perms, nlink, owner, group, size_field, time_str, display_name, link_suffix);
+        
+        // For single file, use reasonable default widths
+        let perms_width = perms.len().max(10); // Standard permissions are 10 chars, extended can be 11
+        let nlink_width = nlink.to_string().len().max(1);
+        let owner_width = owner.len().max(1);
+        let group_width = group.len().max(1);
+        let size_width = size_field.len().max(1);
+        
+        println!("{:<perms_width$} {:>nlink_width$} {:<owner_width$} {:<group_width$} {:>size_width$} {} {}{}", 
+            perms, nlink, owner, group, size_field, time_str, display_name, link_suffix,
+            perms_width = perms_width,
+            nlink_width = nlink_width,
+            owner_width = owner_width,
+            group_width = group_width,
+            size_width = size_width
+        );
         Ok(())
     }
     fn major_minor(&self, rdev: u64) -> (u32, u32) {
@@ -453,6 +468,18 @@ impl LsCommand {
     }
 
     fn print_long_format(&self, files: &[fs::DirEntry], flags: &LsFlags) -> Result<(), ShellError> {
+        if files.is_empty() {
+            return Ok(());
+        }
+
+        // First pass: collect all the data and calculate column widths
+        let mut file_data = Vec::new();
+        let mut max_nlink_width = 0;
+        let mut max_owner_width = 0;
+        let mut max_group_width = 0;
+        let mut max_size_width = 0;
+        let mut max_perms_width = 0;
+
         for entry in files {
             let name = entry.file_name().to_string_lossy().to_string();
             let mut display_name = name.clone();
@@ -474,13 +501,12 @@ impl LsCommand {
                 let ftype = metadata.file_type();
                 let size_field = if ftype.is_char_device() || ftype.is_block_device() {
                     let (maj, min) = self.major_minor(metadata.rdev());
-                    format!("{:>3}, {:>3}", maj, min)
+                    format!("{:>3}, {:>5}", maj, min)
                 } else {
                     format!("{:>8}", metadata.len())
                 };
                 
                 // Get the most appropriate time to display
-                // Standard ls shows modification time
                 let time_to_show = metadata.modified()
                     .unwrap_or_else(|_| std::time::SystemTime::now());
                 let time_str = self.format_time(time_to_show);
@@ -490,14 +516,13 @@ impl LsCommand {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
                         display_name.push('/');
-                    } else if ftype.is_symlink() {
-                        // For symlinks, don't add any indicator to the symlink name itself
-                        // Indicators will be added to the target in the link_suffix
+                    } else if ftype.is_symlink() && !flags.long_format {
+                        display_name.push('@');
                     } else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
                         display_name.push('=');
-                    } else if self.is_executable(&metadata) {
+                    } else if !ftype.is_symlink() && self.is_executable(&metadata) {
                         display_name.push('*');
                     }
                 }
@@ -530,11 +555,36 @@ impl LsCommand {
                     String::new()
                 };
 
-                println!("{} {:>4} {} {} {} {} {}{}", 
-                    perms, nlink, owner, group, size_field, time_str, display_name, link_suffix);
+                // Update column widths
+                max_perms_width = max_perms_width.max(perms.len());
+                max_nlink_width = max_nlink_width.max(nlink.to_string().len());
+                max_owner_width = max_owner_width.max(owner.len());
+                max_group_width = max_group_width.max(group.len());
+                max_size_width = max_size_width.max(size_field.len());
+
+                file_data.push((perms, nlink, owner, group, size_field, time_str, display_name, link_suffix));
             } else {
-                println!("{}", display_name);
+                file_data.push(("".to_string(), 0, "".to_string(), "".to_string(), "".to_string(), "".to_string(), display_name, "".to_string()));
             }
+        }
+
+        // Second pass: print with proper column alignment
+        for (perms, nlink, owner, group, size_field, time_str, display_name, link_suffix) in file_data {
+            println!("{:<perms_width$} {:>nlink_width$} {:<owner_width$} {:<group_width$} {:>size_width$} {} {}{}", 
+                perms, 
+                nlink, 
+                owner, 
+                group, 
+                size_field, 
+                time_str, 
+                display_name, 
+                link_suffix,
+                perms_width = max_perms_width,
+                nlink_width = max_nlink_width,
+                owner_width = max_owner_width,
+                group_width = max_group_width,
+                size_width = max_size_width
+            );
         }
         Ok(())
     }
