@@ -68,7 +68,6 @@ impl Shell {
         if bytes_read == 0 {
             return Ok(None);
         }
-        // Don't trim - preserve newlines for proper quote handling
         Ok(Some(input))
     }
 
@@ -90,20 +89,15 @@ impl Shell {
 
             complete_input.push_str(&line);
             
-            // Try to parse the input to check if it's complete
             match self.parser.parse(&complete_input) {
                 Ok(_) => {
-                    // Input is complete, break out of the loop
                     break;
                 }
                 Err(ShellError::IncompleteInput(_)) => {
-                    // Input is incomplete, continue reading
-                    // Don't add space - we're in the middle of a quoted string
                     self.display_continuation_prompt()?;
                     continue;
                 }
                 Err(e) => {
-                    // Some other error, return it
                     return Err(e);
                 }
             }

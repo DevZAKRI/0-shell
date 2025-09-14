@@ -55,31 +55,33 @@ impl CommandParser {
                 }
                 '\\' => {
                     if in_quotes {
-                        if let Some(next_ch) = chars.next() {
-                            match next_ch {
-                                'n' => current_part.push('\n'),
-                                't' => current_part.push('\t'),
-                                'r' => current_part.push('\r'),
-                                '\\' | '"' | '\'' => current_part.push(next_ch),
-                                _ => {
-                                    current_part.push('\\');
-                                    current_part.push(next_ch);
-                                }
-                            }
+                        if quote_char == '\'' {
+                            current_part.push(ch);
                         } else {
-                            current_part.push('\\');
+                            if let Some(next_ch) = chars.next() {
+                                match next_ch {
+                                    '\n' => {
+                                    }
+                                    _ => {
+                                        current_part.push('\\');
+                                        current_part.push(next_ch);
+                                    }
+                                }
+                            } else {
+                                return Err(ShellError::IncompleteInput('\\'));
+                            }
                         }
                     } else {
                         if let Some(next_ch) = chars.next() {
                             match next_ch {
-                                ' ' => {
-                                    current_part.push(' ');
+                                '\n' => {
                                 }
-                                _ => current_part.push(ch),
+                                _ => {
+                                    current_part.push(next_ch);
+                                }
                             }
                         } else {
-                            // Backslash at end of input is an error
-                            return Err(ShellError::ParseError("Unexpected end of input after backslash".to_string()));
+                            return Err(ShellError::IncompleteInput('\\'));
                         }
                     }
                 }
