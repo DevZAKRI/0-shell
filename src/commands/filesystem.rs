@@ -218,7 +218,6 @@ impl LsCommand {
             } else if ftype.is_symlink() && !flags.long_format {
                 display_name.push('@');
             } else if
-                // Only show @ if not long format
                 ftype.is_fifo()
             {
                 display_name.push('|');
@@ -226,13 +225,12 @@ impl LsCommand {
                 display_name.push('=');
             } else if !ftype.is_symlink() && self.is_executable(&meta) {
                 display_name.push('*');
-            } // Don't add * to symlinks in long format
+            }
         }
         let link_suffix = if ftype.is_symlink() {
             match fs::read_link(&full) {
                 Ok(t) => {
                     let mut target = t.display().to_string();
-                    // Add file type indicator to the target if -F flag is used
                     if flags.file_indicators {
                         if let Ok(target_meta) = fs::metadata(&full) {
                             let target_type = target_meta.file_type();
@@ -243,7 +241,6 @@ impl LsCommand {
                             } else if target_type.is_fifo() {
                                 target.push('|');
                             } else if self.is_executable(&target_meta) {
-                                // Use self.is_executable() method
                                 target.push('*');
                             }
                         }
@@ -256,8 +253,7 @@ impl LsCommand {
             String::new()
         };
 
-        // For single file, use reasonable default widths
-        let perms_width = perms.len().max(10); // Standard permissions are 10 chars, extended can be 11
+        let perms_width = perms.len().max(10);
         let nlink_width = nlink.to_string().len().max(1);
         let owner_width = owner.len().max(1);
         let group_width = group.len().max(1);
@@ -282,13 +278,11 @@ impl LsCommand {
         Ok(())
     }
     fn major_minor(&self, rdev: u64) -> (u32, u32) {
-        // Linux device encoding per sysmacros.h
         let major = ((rdev >> 8) & 0xfff) as u32;
         let minor = ((rdev & 0xff) | ((rdev >> 12) & 0xfffff00)) as u32;
         (major, minor)
     }
     fn get_owner_name(&self, uid: u32) -> String {
-        // Try using getpwuid system call
         unsafe {
             let passwd = libc::getpwuid(uid as libc::uid_t);
             if !passwd.is_null() {
@@ -297,7 +291,6 @@ impl LsCommand {
             }
         }
 
-        // Fallback: Try reading /etc/passwd directly
         if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
             for line in content.lines() {
                 let parts: Vec<&str> = line.split(':').collect();
@@ -311,12 +304,10 @@ impl LsCommand {
             }
         }
 
-        // Final fallback to UID as string
         uid.to_string()
     }
 
     fn get_group_name(&self, gid: u32) -> String {
-        // Try using getgrgid system call
         unsafe {
             let group = libc::getgrgid(gid as libc::gid_t);
             if !group.is_null() {
@@ -325,7 +316,6 @@ impl LsCommand {
             }
         }
 
-        // Fallback: Try reading /etc/group directly
         if let Ok(content) = std::fs::read_to_string("/etc/group") {
             for line in content.lines() {
                 let parts: Vec<&str> = line.split(':').collect();
@@ -339,7 +329,6 @@ impl LsCommand {
             }
         }
 
-        // Final fallback to GID as string
         gid.to_string()
     }
 
@@ -356,13 +345,11 @@ impl LsCommand {
         for arg in args {
             if arg.starts_with('-') && is_option {
                 if arg == "-" {
-                    // Single dash is treated as a path
                     paths.push(arg.clone());
                 } else if arg == "--" {
                     is_option = false;
-                    continue; // Skip to next argument
+                    continue;
                 } else {
-                    // Parse flags
                     for c in arg[1..].chars() {
                         match c {
                             'a' => {
@@ -395,24 +382,20 @@ impl LsCommand {
     fn list_directory(&self, path_str: &str, flags: &LsFlags) -> Result<(), ShellError> {
         let path = Path::new(path_str);
 
-        // Check if path exists
         if !path.exists() {
             return Err(ShellError::FileSystemError("No such file or directory".to_string()));
         }
 
-        // Handle files vs directories
         if path.is_file() {
             return self.list_file(path, flags);
         } else if path.is_dir() {
             return self.list_directory_contents(path, flags);
         } else {
-            // Handle other file types (symlinks, etc.)
             return self.list_file(path, flags);
         }
     }
 
     fn list_file(&self, path: &Path, flags: &LsFlags) -> Result<(), ShellError> {
-        // Use the full path instead of just the filename
         let name = path.to_string_lossy().to_string();
 
         if flags.long_format {
@@ -426,11 +409,9 @@ impl LsCommand {
                     if ftype.is_dir() {
                         display_name.push('/');
                     } else if ftype.is_symlink() {
-                        // For symlinks, only show @ indicator in short format, not long format
                         if !flags.long_format {
                             display_name.push('@');
                         }
-                        // In long format, indicators will be added to the target in the link_suffix
                     } else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
@@ -529,11 +510,8 @@ impl LsCommand {
             name_a.cmp(&name_b)
         });
 
-        // Print files
         if flags.long_format {
-            // Print total line first
             self.print_total(path, &files, flags)?;
-            // Include . and .. before listing entries when showing hidden
             if flags.show_hidden {
                 self.print_one_long(path, ".", flags)?;
                 self.print_one_long(path, "..", flags)?;
@@ -561,11 +539,9 @@ impl LsCommand {
                     if ftype.is_dir() {
                         display_name.push('/');
                     } else if ftype.is_symlink() {
-                        // For symlinks, only show @ indicator in short format, not long format
                         if !flags.long_format {
                             display_name.push('@');
                         }
-                        // In long format, indicators will be added to the target in the link_suffix
                     } else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
@@ -591,7 +567,6 @@ impl LsCommand {
             return Ok(());
         }
 
-        // First pass: collect all the data and calculate column widths
         let mut file_data = Vec::new();
         let mut max_nlink_width = 0;
         let mut max_owner_width = 0;
@@ -604,19 +579,15 @@ impl LsCommand {
             let mut display_name = name.clone();
 
             if let Ok(metadata) = entry.metadata() {
-                // Permissions
                 let perms = self.format_permissions_with_extended(&metadata, &entry.path());
 
-                // Hard links count
                 let nlink = metadata.nlink();
 
-                // Get actual owner and group IDs
                 let uid = metadata.uid();
                 let gid = metadata.gid();
                 let owner = self.get_owner_name(uid);
                 let group = self.get_group_name(gid);
 
-                // Size or device numbers
                 let ftype = metadata.file_type();
                 let size_field = if ftype.is_char_device() || ftype.is_block_device() {
                     let (maj, min) = self.major_minor(metadata.rdev());
@@ -625,13 +596,11 @@ impl LsCommand {
                     format!("{:>8}", metadata.len())
                 };
 
-                // Get the most appropriate time to display
                 let time_to_show = metadata
                     .modified()
                     .unwrap_or_else(|_| std::time::SystemTime::now());
                 let time_str = self.format_time(time_to_show);
 
-                // File type indicator
                 if flags.file_indicators {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
@@ -647,12 +616,10 @@ impl LsCommand {
                     }
                 }
 
-                // If symlink, append " -> target" like ls -l
                 let link_suffix = if ftype.is_symlink() {
                     match std::fs::read_link(entry.path()) {
                         Ok(target) => {
                             let mut target_str = target.display().to_string();
-                            // Add file type indicator to the target if -F flag is used
                             if flags.file_indicators {
                                 if let Ok(target_meta) = fs::metadata(entry.path()) {
                                     let target_type = target_meta.file_type();
@@ -675,7 +642,6 @@ impl LsCommand {
                     String::new()
                 };
 
-                // Update column widths
                 max_perms_width = max_perms_width.max(perms.len());
                 max_nlink_width = max_nlink_width.max(nlink.to_string().len());
                 max_owner_width = max_owner_width.max(owner.len());
@@ -706,7 +672,6 @@ impl LsCommand {
             }
         }
 
-        // Second pass: print with proper column alignment
         for (
             perms,
             nlink,
@@ -758,33 +723,27 @@ impl LsCommand {
             perms.push('-');
         }
 
-        // Owner permissions
         perms.push(if (mode & 0o400) != 0 { 'r' } else { '-' });
         perms.push(if (mode & 0o200) != 0 { 'w' } else { '-' });
 
-        // Handle setuid bit (4000) - if set and executable, show 's', if set and not executable, show 'S'
         if (mode & 0o4000) != 0 {
             perms.push(if (mode & 0o100) != 0 { 's' } else { 'S' });
         } else {
             perms.push(if (mode & 0o100) != 0 { 'x' } else { '-' });
         }
 
-        // Group permissions
         perms.push(if (mode & 0o040) != 0 { 'r' } else { '-' });
         perms.push(if (mode & 0o020) != 0 { 'w' } else { '-' });
 
-        // Handle setgid bit (2000) - if set and executable, show 's', if set and not executable, show 'S'
         if (mode & 0o2000) != 0 {
             perms.push(if (mode & 0o010) != 0 { 's' } else { 'S' });
         } else {
             perms.push(if (mode & 0o010) != 0 { 'x' } else { '-' });
         }
 
-        // Other permissions
         perms.push(if (mode & 0o004) != 0 { 'r' } else { '-' });
         perms.push(if (mode & 0o002) != 0 { 'w' } else { '-' });
 
-        // Handle sticky bit (1000) - if set and executable, show 't', if set and not executable, show 'T'
         if (mode & 0o1000) != 0 {
             perms.push(if (mode & 0o001) != 0 { 't' } else { 'T' });
         } else {
@@ -797,7 +756,6 @@ impl LsCommand {
     fn format_permissions_with_extended(&self, metadata: &fs::Metadata, path: &Path) -> String {
         let mut perms = self.format_permissions(metadata);
 
-        // Check for extended attributes or ACLs
         if self.has_extended_attributes(path) {
             perms.push('+');
         }
@@ -806,8 +764,6 @@ impl LsCommand {
     }
 
     fn has_extended_attributes(&self, path: &Path) -> bool {
-        // Use libc system calls to detect extended attributes
-        // Convert path to C string
         let path_cstr = match std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
             Ok(s) => s,
             Err(_) => {
@@ -871,12 +827,10 @@ impl CommandExecutor for CatCommand {
         let mut command_options = CommandOptions {
             is_option: true,
         };
-        // If no arguments provided, read from stdin
         if args.is_empty() {
             return self.read_from_stdin();
         }
 
-        //let mut has_error = false;
 
         for file_path in args {
             if file_path == "--" {
@@ -893,16 +847,10 @@ impl CommandExecutor for CatCommand {
                 Ok(_) => {}
                 Err(e) => {
                     eprintln!("cat: {}: {}", file_path, e);
-                    //has_error = true;
                 }
             }
         }
 
-        // if has_error {
-        //     Err(ShellError::ExecutionError("Some files could not be processed".to_string()))
-        // } else {
-        //     Ok(())
-        // }
         Ok(())
     }
 
@@ -912,7 +860,6 @@ impl CommandExecutor for CatCommand {
 }
 
 impl CatCommand {
-    /// Read from stdin and write to stdout
     fn read_from_stdin(&self) -> Result<(), ShellError> {
         let stdin = io::stdin();
         let mut handle = stdin.lock();
@@ -923,7 +870,7 @@ impl CatCommand {
             match handle.read(&mut buffer) {
                 Ok(0) => {
                     break;
-                } // EOF
+                }
                 Ok(n) => {
                     stdout.write_all(&buffer[..n]).map_err(|e| ShellError::IoError(e))?;
                 }
@@ -1055,8 +1002,8 @@ impl CommandExecutor for CpCommand {
             return Err(ShellError::ExecutionError("cp: missing an operand".to_string()));
         }
 
-        let target = Path::new(filtered.pop().unwrap()); // last argument = destination
-        let sources = filtered; // rest = sources
+        let target = Path::new(filtered.pop().unwrap());
+        let sources = filtered;
 
         for src in sources {
             let src_path = Path::new(src);
@@ -1071,7 +1018,6 @@ impl CommandExecutor for CpCommand {
                     eprintln!("cp: omitting directory '{}', use -r to copy", src);
                     continue;
                 }
-                // Copy directory recursively
                 if
                     let Err(err) = copy_dir_all(
                         src_path,
@@ -1081,7 +1027,6 @@ impl CommandExecutor for CpCommand {
                     eprintln!("cp: failed to copy directory '{}': {}", src, err);
                 }
             } else {
-                // Determine destination path
                 let dest_path = if target.is_dir() {
                     target.join(src_path.file_name().unwrap())
                 } else {
@@ -1102,7 +1047,6 @@ impl CommandExecutor for CpCommand {
     }
 }
 
-/// Recursively copy a directory
 fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
 
@@ -1145,7 +1089,6 @@ impl CommandExecutor for MvCommand {
             return Err(ShellError::ExecutionError("mv: missing operand".to_string()));
         }
 
-        // Last argument = destination
         let target = Path::new(&filtered[filtered.len() - 1]);
         let sources = &filtered[..filtered.len() - 1];
 
@@ -1177,7 +1120,7 @@ impl CommandExecutor for MvCommand {
 }
 impl CommandExecutor for RmCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        let pwd = env::current_dir().unwrap().to_string_lossy().to_string(); // current directory as String
+        let pwd = env::current_dir().unwrap().to_string_lossy().to_string();
 
         if args.is_empty() {
             return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
