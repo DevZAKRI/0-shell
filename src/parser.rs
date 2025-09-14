@@ -41,6 +41,18 @@ impl CommandParser {
                         current_part.push(ch);
                     }
                 }
+                '\n' => {
+                    if in_quotes {
+                        // Inside quotes, newline is treated as literal newline
+                        current_part.push('\n');
+                    } else {
+                        // Outside quotes, newline ends the current part
+                        if !current_part.is_empty() {
+                            parts.push(current_part.clone());
+                            current_part.clear();
+                        }
+                    }
+                }
                 '\\' => {
                     if in_quotes {
                         if let Some(next_ch) = chars.next() {

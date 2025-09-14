@@ -68,7 +68,8 @@ impl Shell {
         if bytes_read == 0 {
             return Ok(None);
         }
-        Ok(Some(input.trim().to_string()))
+        // Don't trim - preserve newlines for proper quote handling
+        Ok(Some(input))
     }
 
     fn read_complete_input(&self) -> Result<Option<String>, ShellError> {
@@ -88,8 +89,7 @@ impl Shell {
             }
 
             complete_input.push_str(&line);
-            complete_input.push(' '); // Add space between lines
-
+            
             // Try to parse the input to check if it's complete
             match self.parser.parse(&complete_input) {
                 Ok(_) => {
@@ -98,6 +98,7 @@ impl Shell {
                 }
                 Err(ShellError::IncompleteInput(_)) => {
                     // Input is incomplete, continue reading
+                    // Don't add space - we're in the middle of a quoted string
                     self.display_continuation_prompt()?;
                     continue;
                 }
