@@ -8,6 +8,7 @@ use std::os::unix::fs::FileTypeExt;
 use std::time::SystemTime;
 use std::os::unix::fs::MetadataExt;
 use std::ffi::CStr;
+use std::env;
 use chrono::{DateTime, Local};
 
 // Standard ls colors
@@ -41,6 +42,18 @@ pub struct CommandOptions {
 
 impl CommandExecutor for PwdCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
+        let mut is_option = true;
+        
+        for arg in args {
+            if arg == "--" {
+                is_option = false;
+                continue;
+            }
+            if arg.starts_with('-') && is_option {
+                return Err(ShellError::InvalidOption(arg.clone()));
+            }
+        }
+        
         println!("{}", env::current_dir()?.display());
         Ok(())
     }
@@ -52,12 +65,28 @@ impl CommandExecutor for PwdCommand {
 
 impl CommandExecutor for CdCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        let target_dir = if args.is_empty() || args[0] == "~" {
+        let mut is_option = true;
+        let mut target_dir = String::new();
+        
+        for arg in args {
+            if arg == "--" {
+                is_option = false;
+                continue;
+            }
+            if arg.starts_with('-') && is_option && arg != "-" {
+                return Err(ShellError::InvalidOption(arg.clone()));
+            }
+            if target_dir.is_empty() {
+                target_dir = arg.clone();
+            }
+        }
+        
+        let target_dir = if target_dir.is_empty() || target_dir == "~" {
             std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
-        } else if args[0] == "-" {
+        } else if target_dir == "-" {
             std::env::var("OLDPWD").unwrap_or_else(|_| ".".to_string())
         } else {
-            args[0].clone()
+            target_dir
         };
 
         match std::env::set_current_dir(&target_dir) {
@@ -639,64 +668,6 @@ impl LsCommand {
 
 
 
-impl CommandExecutor for CatCommand {
-    fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-        let mut command_options = CommandOptions {
-            is_option: true,
-        };
-        // If no arguments provided, read from stdin
-        if args.is_empty() {
-            return self.read_from_stdin();
-        }
-        
-        //let mut has_error = false;
-
-        for file_path in args {
-            if file_path == "--" {
-                command_options.is_option = false;
-                if args.len() == 1 {
-                    return self.read_from_stdin();
-                }
-                continue;
-                
-            }
-            if file_path.starts_with('-') && file_path != "-" && command_options.is_option {
-                return Err(ShellError::InvalidOption(file_path.clone()));
-            }
-            match self.process_file(file_path) {
-                Ok(_) => {},
-                Err(e) => {
-                    eprintln!("cat: {}: {}", file_path, e);
-                    //has_error = true;
-                }
-            }
-        }
-
-        // if has_error {
-        //     Err(ShellError::ExecutionError("Some files could not be processed".to_string()))
-        // } else {
-        //     Ok(())
-        // }
-        Ok(())
-    }
-
-    fn parse_timezone_name(&self, tz_name: &str) -> Option<i64> {
-        // Common timezone offsets
-        match tz_name {
-            "UTC" => Some(0),
-            "GMT" => Some(0),
-            "CET" => Some(3600), // Central European Time (UTC+1)
-            "CEST" => Some(7200), // Central European Summer Time (UTC+2)
-            "EET" => Some(7200), // Eastern European Time (UTC+2)
-            "EEST" => Some(10800), // Eastern European Summer Time (UTC+3)
-            "EST" => Some(-18000), // Eastern Standard Time (UTC-5)
-            "EDT" => Some(-14400), // Eastern Daylight Time (UTC-4)
-            "PST" => Some(-28800), // Pacific Standard Time (UTC-8)
-            "PDT" => Some(-25200), // Pacific Daylight Time (UTC-7)
-            _ => None,
-        }
-    }
-}
 
 
 
@@ -805,11 +776,16 @@ impl CommandExecutor for MkdirCommand {
 
         let mut create_parents = false;
         let mut directories = Vec::new();
+        let mut is_option = true;
 
         for arg in args {
-            if arg == "-p" {
+            if arg == "--" {
+                is_option = false;
+                continue;
+            }
+            if arg == "-p" && is_option {
                 create_parents = true;
-            } else if arg.starts_with('-') {
+            } else if arg.starts_with('-') && is_option {
                 return Err(ShellError::ExecutionError(format!("mkdir: invalid option -- '{}'", &arg[1..])));
             } else {
                 directories.push(arg);
@@ -845,13 +821,24 @@ impl CommandExecutor for CpCommand {
         if args.len() < 2 {
             return Err(ShellError::ExecutionError("cp: missing operand".to_string()));
         }
-        // Check for -r flag
-        let recursive = args.contains(&"-r".to_string());
+        
+        let mut recursive = false;
+        let mut is_option = true;
+        let mut filtered: Vec<&String> = Vec::new();
 
-        // Filter arguments to get sources and destination
-        let mut filtered: Vec<&String> = args.iter()
-            .filter(|a| a != &&"-r".to_string())
-            .collect();
+        for arg in args {
+            if arg == "--" {
+                is_option = false;
+                continue;
+            }
+            if arg == "-r" && is_option {
+                recursive = true;
+            } else if arg.starts_with('-') && is_option {
+                return Err(ShellError::InvalidOption(arg.clone()));
+            } else {
+                filtered.push(arg);
+            }
+        }
 
          if filtered.len() < 2 {
             return Err(ShellError::ExecutionError("cp: missing an operand".to_string()));
@@ -923,8 +910,27 @@ impl CommandExecutor for MvCommand {
         if args.len() < 2 {
             return Err(ShellError::ExecutionError("mv: missing operand".to_string()));
         }
+        
+        let mut is_option = true;
+        let mut filtered: Vec<&String> = Vec::new();
+
+        for arg in args {
+            if arg == "--" {
+                is_option = false;
+                continue;
+            }
+            if arg.starts_with('-') && is_option {
+                return Err(ShellError::InvalidOption(arg.clone()));
+            } else {
+                filtered.push(arg);
+            }
+        }
+        
+        if filtered.len() < 2 {
+            return Err(ShellError::ExecutionError("mv: missing operand".to_string()));
+        }
+        
         // Last argument = destination
-        let filtered = args;
         let target = Path::new(&filtered[filtered.len() - 1]);
         let sources = &filtered[..filtered.len() - 1];
 
@@ -960,10 +966,28 @@ impl CommandExecutor for RmCommand {
          if args.is_empty() {
             return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
         }
-        // Check if -r flag is present
-        let recursive = args.contains(&"-r".to_string());
-        // Collect actual targets (filter out flags)
-        let targets: Vec<&String> = args.iter().filter(|a| a != &&"-r".to_string()).collect();
+        
+        let mut recursive = false;
+        let mut is_option = true;
+        let mut targets: Vec<&String> = Vec::new();
+
+        for arg in args {
+            if arg == "--" {
+                is_option = false;
+                continue;
+            }
+            if arg == "-r" && is_option {
+                recursive = true;
+            } else if arg.starts_with('-') && is_option {
+                return Err(ShellError::InvalidOption(arg.clone()));
+            } else {
+                targets.push(arg);
+            }
+        }
+        
+        if targets.is_empty() {
+            return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
+        }
         for target in targets {
             let path = Path::new(target);
 
