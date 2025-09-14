@@ -41,6 +41,18 @@ impl CommandParser {
                         current_part.push(ch);
                     }
                 }
+                '\n' => {
+                    if in_quotes {
+                        // Inside quotes, newline is treated as literal newline
+                        current_part.push('\n');
+                    } else {
+                        // Outside quotes, newline ends the current part
+                        if !current_part.is_empty() {
+                            parts.push(current_part.clone());
+                            current_part.clear();
+                        }
+                    }
+                }
                 '\\' => {
                     if in_quotes {
                         if let Some(next_ch) = chars.next() {
@@ -63,11 +75,11 @@ impl CommandParser {
                                 ' ' => {
                                     current_part.push(' ');
                                 }
-                                _ => current_part.push(ch),
+                                _ => current_part.push(next_ch),
                             }
                         } else {
                             // Backslash at end of input is an error
-                            return Err(ShellError::ParseError("Unexpected end of input after backslash".to_string()));
+                            return Err(ShellError::IncompleteInput('\\'));
                         }
                     }
                 }
@@ -102,10 +114,6 @@ impl CommandParser {
         if parts.is_empty() {
             return Ok(None);
         }
-    
-        let name = parts[0].clone();
-        let args = parts[1..].to_vec();
-    
     
         let name = parts[0].clone();
         let args = parts[1..].to_vec();

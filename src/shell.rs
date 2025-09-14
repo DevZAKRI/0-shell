@@ -68,7 +68,7 @@ impl Shell {
         if bytes_read == 0 {
             return Ok(None);
         }
-        Ok(Some(input.trim().to_string()))
+        Ok(Some(input))
     }
 
     fn read_complete_input(&self) -> Result<Option<String>, ShellError> {
@@ -88,21 +88,16 @@ impl Shell {
             }
 
             complete_input.push_str(&line);
-            complete_input.push(' '); // Add space between lines
-
-            // Try to parse the input to check if it's complete
+            
             match self.parser.parse(&complete_input) {
                 Ok(_) => {
-                    // Input is complete, break out of the loop
                     break;
                 }
                 Err(ShellError::IncompleteInput(_)) => {
-                    // Input is incomplete, continue reading
                     self.display_continuation_prompt()?;
                     continue;
                 }
                 Err(e) => {
-                    // Some other error, return it
                     return Err(e);
                 }
             }
