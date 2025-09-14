@@ -394,8 +394,10 @@ impl LsCommand {
         }
 
         files.sort_by(|a, b| {
-            let name_a = a.file_name().to_string_lossy().to_string().replace(".", "").to_lowercase();
-            let name_b = b.file_name().to_string_lossy().to_string().replace(".", "").to_lowercase();
+            let name_a = a.file_name().to_string_lossy().to_string().to_lowercase()
+                .chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+            let name_b = b.file_name().to_string_lossy().to_string().to_lowercase()
+                .chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
             name_a.cmp(&name_b)
         });
 
