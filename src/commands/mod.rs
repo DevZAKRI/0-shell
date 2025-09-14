@@ -37,6 +37,7 @@ impl CommandRegistry {
         self.commands.insert("cp".to_string(), Box::new(filesystem::CpCommand));
         self.commands.insert("mv".to_string(), Box::new(filesystem::MvCommand));
         self.commands.insert("rm".to_string(), Box::new(filesystem::RmCommand));
+        self.commands.insert("help".to_string(), Box::new(builtin::HelpCommand));
     }
 
     pub fn execute(&self, command: &Command) -> Result<(), ShellError> {

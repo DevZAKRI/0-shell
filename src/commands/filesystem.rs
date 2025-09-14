@@ -50,7 +50,7 @@ impl CommandExecutor for PwdCommand {
     }
 
     fn help(&self) -> &str {
-        "pwd - Print working directory"
+        "Usage: pwd - Print working directory"
     }
 }
 
@@ -113,7 +113,7 @@ impl CommandExecutor for CdCommand {
     }
 
     fn help(&self) -> &str {
-        "cd [directory] - Change directory"
+        "Usage: cd [directory] - Change directory to the specified directory"
     }
 }
 
@@ -213,7 +213,7 @@ impl CommandExecutor for LsCommand {
     }
 
     fn help(&self) -> &str {
-        "ls [-a] [-l] [-F] [directory...] - List directory contents"
+        "Usage: ls [-a] [-l] [-F] [directory...] - List directory contents"
     }
 }
 
@@ -905,7 +905,7 @@ impl CommandExecutor for CatCommand {
     }
 
     fn help(&self) -> &str {
-        "cat [file...] - Concatenate and display files (reads from stdin if no files provided)"
+        "Usage: cat [file...] - Concatenate and display files (reads from stdin if no files provided)"
     }
 }
 
@@ -1020,7 +1020,7 @@ impl CommandExecutor for MkdirCommand {
     }
 
     fn help(&self) -> &str {
-        "mkdir [-p] [directory...] - Create directories"
+        "Usage: mkdir [-p] [directory...] - Create directories"
     }
 }
 
@@ -1148,7 +1148,7 @@ impl CommandExecutor for CpCommand {
     }
 
     fn help(&self) -> &str {
-        "cp source... destination - Copy files and directories"
+        "Usage: cp source... destination - Copy files and directories"
     }
 }
 
@@ -1264,7 +1264,7 @@ impl CommandExecutor for MvCommand {
     }
 
     fn help(&self) -> &str {
-        "mv source... destination - Move (rename) files or directories"
+        "Usage: mv source... destination - Move (rename) files or directories"
     }
 }
 impl CommandExecutor for RmCommand {
@@ -1366,7 +1366,7 @@ impl CommandExecutor for RmCommand {
     }
 
     fn help(&self) -> &str {
-        "rm [-r] [file...] - Remove files or directories"
+        "Usage: rm [-r] [file...] - Remove files or directories"
     }
 }
 fn is_dot_or_dotdot(path: &str) -> bool {

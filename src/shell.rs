@@ -41,13 +41,20 @@ impl Shell {
     }
 
     fn display_prompt(&self) -> Result<(), ShellError> {
-        print!("$ ");
-        io
-            ::stdout()
-            .flush()
-            .map_err(|e| ShellError::IoError(e))?;
+        let current_dir = std::env::current_dir().map_err(ShellError::IoError)?;
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    
+        let mut display_dir = current_dir.to_string_lossy().to_string();
+        if display_dir.starts_with(&home) {
+            display_dir = display_dir.replacen(&home, "~", 1);
+        }
+    
+        print!("{} $ ", display_dir);
+        std::io::stdout().flush().map_err(ShellError::IoError)?;
         Ok(())
     }
+    
+    
 
     fn display_continuation_prompt(&self) -> Result<(), ShellError> {
         print!("> ");
