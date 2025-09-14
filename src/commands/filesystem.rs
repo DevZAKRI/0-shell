@@ -103,16 +103,50 @@ impl CommandExecutor for LsCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
         let (flags, paths) = self.parse_args(args)?;
         
-        // If no paths specified, use current directory
+        
         let paths = if paths.is_empty() {
             vec![".".to_string()]
         } else {
             paths
         };
 
-        for path in paths {
-            if let Err(e) = self.list_directory(&path, &flags) {
-                eprintln!("ls: {}: {}", path, e);
+        let mut files = Vec::new();
+        let mut directories = Vec::new();
+        
+        for path in &paths {
+            let path_obj = Path::new(path);
+            if path_obj.is_file() {
+                files.push(path.clone());
+            } else if path_obj.is_dir() {
+                directories.push(path.clone());
+            } else {
+                files.push(path.clone());
+            }
+        }
+        
+        if !files.is_empty() {
+            if flags.long_format {
+                for file in &files {
+                    if let Err(e) = self.list_file(Path::new(file), &flags) {
+                        eprintln!("ls: {}: {}", file, e);
+                    }
+                }
+            } else {
+                if let Err(e) = self.list_files_together(&files, &flags) {
+                    eprintln!("ls: error listing files: {}", e);
+                }
+            }
+        }
+        
+        for (i, dir) in directories.iter().enumerate() {
+            if !files.is_empty() || i > 0 {
+                println!();
+            }
+            if !files.is_empty() || directories.len() > 1 {
+                println!("{}:", dir);
+            }
+            if let Err(e) = self.list_directory_contents(Path::new(dir), &flags) {
+                eprintln!("ls: {}: {}", dir, e);
             }
         }
         
@@ -127,7 +161,6 @@ impl CommandExecutor for LsCommand {
 impl LsCommand {
     fn print_total(&self, dir: &Path, files: &[fs::DirEntry], flags: &LsFlags) -> Result<(), ShellError> {
         let mut blocks: u64 = 0;
-        // Include . and .. when -a
         if flags.show_hidden {
             if let Ok(meta) = fs::symlink_metadata(dir.join(".")) { blocks = blocks.saturating_add(meta.blocks()); }
             if let Ok(meta) = fs::symlink_metadata(dir.join("..")) { blocks = blocks.saturating_add(meta.blocks()); }
@@ -137,7 +170,6 @@ impl LsCommand {
                 blocks = blocks.saturating_add(meta.blocks());
             }
         }
-        // st_blocks are 512-byte blocks; GNU ls prints in 1K blocks by default
         let total_k = (blocks + 1) / 2;
         println!("total {}", total_k);
         Ok(())
@@ -367,6 +399,35 @@ impl LsCommand {
             }
         }
         
+        Ok(())
+    }
+
+    fn list_files_together(&self, files: &[String], flags: &LsFlags) -> Result<(), ShellError> {
+        for file in files {
+            let path = Path::new(file);
+            let name = path.to_string_lossy().to_string();
+            let mut display_name = name.clone();
+            
+            if let Ok(metadata) = fs::symlink_metadata(path) {
+                if flags.file_indicators {
+                    let ftype = metadata.file_type();
+                    if ftype.is_dir() {
+                        display_name.push('/');
+                    } else if ftype.is_symlink() {
+                        display_name.push('@');
+                    } else if ftype.is_fifo() {
+                        display_name.push('|');
+                    } else if ftype.is_socket() {
+                        display_name.push('=');
+                    } else if self.is_executable(&metadata) {
+                        display_name.push('*');
+                    }
+                }
+            }
+            
+            print!("{}  ", display_name);
+        }
+        println!();
         Ok(())
     }
 
