@@ -291,8 +291,13 @@ impl LsCommand {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
                         display_name.push('/');
-                    } else if ftype.is_symlink() && !flags.long_format { display_name.push('@'); }
-                    else if ftype.is_fifo() {
+                    } else if ftype.is_symlink() {
+                        // For symlinks, only show @ indicator in short format, not long format
+                        if !flags.long_format {
+                            display_name.push('@');
+                        }
+                        // In long format, indicators will be added to the target in the link_suffix
+                    } else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
                         display_name.push('=');
@@ -370,13 +375,18 @@ impl LsCommand {
             let name = entry.file_name().to_string_lossy().to_string();
             let mut display_name = name.clone();
             
-            if let Ok(metadata) = entry.metadata() {
+            if let Ok(metadata) = fs::symlink_metadata(entry.path()) {
                 if flags.file_indicators {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
                         display_name.push('/');
-                    } else if ftype.is_symlink() && !flags.long_format { display_name.push('@'); } // Only show @ if not long format
-                    else if ftype.is_fifo() {
+                    } else if ftype.is_symlink() {
+                        // For symlinks, only show @ indicator in short format, not long format
+                        if !flags.long_format {
+                            display_name.push('@');
+                        }
+                        // In long format, indicators will be added to the target in the link_suffix
+                    } else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
                         display_name.push('=');
@@ -432,8 +442,10 @@ impl LsCommand {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
                         display_name.push('/');
-                    } else if ftype.is_symlink() && !flags.long_format { display_name.push('@'); } // Only show @ if not long format
-                    else if ftype.is_fifo() {
+                    } else if ftype.is_symlink() {
+                        // For symlinks, don't add any indicator to the symlink name itself
+                        // Indicators will be added to the target in the link_suffix
+                    } else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
                         display_name.push('=');
@@ -445,7 +457,25 @@ impl LsCommand {
                 // If symlink, append " -> target" like ls -l
                 let link_suffix = if ftype.is_symlink() {
                     match std::fs::read_link(entry.path()) {
-                        Ok(target) => format!(" -> {}", target.display()),
+                        Ok(target) => {
+                            let mut target_str = target.display().to_string();
+                            // Add file type indicator to the target if -F flag is used
+                            if flags.file_indicators {
+                                if let Ok(target_meta) = fs::metadata(entry.path()) {
+                                    let target_type = target_meta.file_type();
+                                    if target_type.is_socket() {
+                                        target_str.push('=');
+                                    } else if target_type.is_dir() {
+                                        target_str.push('/');
+                                    } else if target_type.is_fifo() {
+                                        target_str.push('|');
+                                    } else if self.is_executable(&target_meta) {
+                                        target_str.push('*');
+                                    }
+                                }
+                            }
+                            format!(" -> {}", target_str)
+                        },
                         Err(_) => String::from(" -> (broken)"),
                     }
                 } else {
