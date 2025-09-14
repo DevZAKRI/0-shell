@@ -1,7 +1,9 @@
 use crate::commands::CommandExecutor;
 use crate::error::ShellError;
+use crate::shell;
 use std::path::Path;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 
 use std::env;
 pub struct PwdCommand;
@@ -111,8 +113,7 @@ impl CommandExecutor for MvCommand {
 }
 impl CommandExecutor for RmCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-     let pwd = env::current_dir().unwrap().to_string_lossy().to_string(); // current directory as String
-
+        let pwd = env::current_dir().unwrap().to_string_lossy().to_string(); // current directory as String
 
         if args.is_empty() {
             return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
@@ -123,9 +124,20 @@ impl CommandExecutor for RmCommand {
         let mut targets: Vec<&String> = Vec::new();
 
         for arg in args {
-           
+            if !can_remove(arg) {
+                return Err(
+                    ShellError::ExecutionError(
+                        format!("rm: cannot remove '{}': Permission denied", arg)
+                    )
+                );
+            }
+
             if arg.as_str() == pwd {
-                return Err(ShellError::ExecutionError("rm: refusing to remove current directory".to_string()));
+                return Err(
+                    ShellError::ExecutionError(
+                        "rm: refusing to remove current directory".to_string()
+                    )
+                );
             }
             if is_dot_or_dotdot(arg) {
                 return Err(
@@ -183,4 +195,12 @@ impl CommandExecutor for RmCommand {
 }
 fn is_dot_or_dotdot(path: &str) -> bool {
     path == "." || path == ".." || path == "./" || path == "../"
+}
+fn can_remove(path: &str) -> bool {
+    let p = Path::new(path);
+    if let Ok(meta) = fs::metadata(p) {
+        !meta.permissions().readonly() 
+    } else {
+        false
+    }
 }
