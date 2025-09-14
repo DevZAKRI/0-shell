@@ -75,7 +75,7 @@ impl CommandParser {
                                 ' ' => {
                                     current_part.push(' ');
                                 }
-                                _ => current_part.push(ch),
+                                _ => current_part.push(next_ch),
                             }
                         } else {
                             // Backslash at end of input is an error
@@ -114,10 +114,6 @@ impl CommandParser {
         if parts.is_empty() {
             return Ok(None);
         }
-    
-        let name = parts[0].clone();
-        let args = parts[1..].to_vec();
-    
     
         let name = parts[0].clone();
         let args = parts[1..].to_vec();
