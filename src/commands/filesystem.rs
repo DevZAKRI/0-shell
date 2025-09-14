@@ -7,14 +7,14 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::FileTypeExt;
 use std::time::SystemTime;
 use std::os::unix::fs::MetadataExt;
-use std::process::Command;
+use std::ffi::CStr;
+use chrono::{DateTime, Local};
 
 // Standard ls colors
-const RESET: &str = "\x1b[0m";
-const BLUE_BOLD: &str = "\x1b[1;34m";  // Directories (bold blue)
-const GREEN: &str = "\x1b[0;32m";      // Executables
-const CYAN: &str = "\x1b[0;36m";       // Symlinks
-use std::env;
+// const RESET: &str = "\x1b[0m";
+// const BLUE_BOLD: &str = "\x1b[1;34m";  // Directories (bold blue)
+// const GREEN: &str = "\x1b[0;32m";      // Executables
+// const CYAN: &str = "\x1b[0;36m";       // Symlinks
 
 pub struct PwdCommand;
 pub struct CdCommand;
@@ -136,19 +136,39 @@ impl LsCommand {
         };
         let time_to_show = meta.modified().unwrap_or_else(|_| SystemTime::now());
         let time_str = self.format_time(time_to_show);
-        let color = self.get_color(&meta);
         let mut display_name = name.to_string();
         if flags.file_indicators {
             if ftype.is_dir() { display_name.push('/'); }
-            else if ftype.is_symlink() { display_name.push('@'); }
+            else if ftype.is_symlink() && !flags.long_format { display_name.push('@'); }  // Only show @ if not long format
             else if ftype.is_fifo() { display_name.push('|'); }
             else if ftype.is_socket() { display_name.push('='); }
-            else if self.is_executable(&meta) { display_name.push('*'); }
+            else if !ftype.is_symlink() && self.is_executable(&meta) { display_name.push('*'); }  // Don't add * to symlinks in long format
         }
         let link_suffix = if ftype.is_symlink() {
-            match fs::read_link(&full) { Ok(t) => format!(" -> {}", t.display()), Err(_) => String::from(" -> (broken)") }
+            match fs::read_link(&full) { 
+                Ok(t) => {
+                    let mut target = t.display().to_string();
+                    // Add file type indicator to the target if -F flag is used
+                    if flags.file_indicators {
+                        if let Ok(target_meta) = fs::metadata(&full) {
+                            let target_type = target_meta.file_type();
+                            if target_type.is_socket() {
+                                target.push('=');
+                            } else if target_type.is_dir() {
+                                target.push('/');
+                            } else if target_type.is_fifo() {
+                                target.push('|');
+                            } else if self.is_executable(&target_meta) {  // Use self.is_executable() method
+                                target.push('*');
+                            }
+                        }
+                    }
+                    format!(" -> {}", target)
+                }, 
+                Err(_) => String::from(" -> (broken)") 
+            }
         } else { String::new() };
-        println!("{} {:>4} {} {} {} {} {}{}{}{}", perms, nlink, owner, group, size_field, time_str, color, display_name, RESET, link_suffix);
+        println!("{} {:>4} {} {} {} {} {}{}", perms, nlink, owner, group, size_field, time_str, display_name, link_suffix);
         Ok(())
     }
     fn major_minor(&self, rdev: u64) -> (u32, u32) {
@@ -158,42 +178,58 @@ impl LsCommand {
         (major, minor)
     }
     fn get_owner_name(&self, uid: u32) -> String {
-        // Try to get username from /etc/passwd or use UID as fallback
-        match std::fs::read_to_string("/etc/passwd") {
-            Ok(content) => {
-                for line in content.lines() {
-                    let parts: Vec<&str> = line.split(':').collect();
-                    if parts.len() >= 3 {
-                        if let Ok(line_uid) = parts[2].parse::<u32>() {
-                            if line_uid == uid {
-                                return parts[0].to_string();
-                            }
+        // Try using getpwuid system call
+        unsafe {
+            let passwd = libc::getpwuid(uid as libc::uid_t);
+            if !passwd.is_null() {
+                let name = CStr::from_ptr((*passwd).pw_name).to_string_lossy();
+                return name.to_string();
+            }
+        }
+        
+        // Fallback: Try reading /etc/passwd directly
+        if let Ok(content) = std::fs::read_to_string("/etc/passwd") {
+            for line in content.lines() {
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 3 {
+                    if let Ok(line_uid) = parts[2].parse::<u32>() {
+                        if line_uid == uid {
+                            return parts[0].to_string();
                         }
                     }
                 }
             }
-            Err(_) => {}
         }
+        
+        // Final fallback to UID as string
         uid.to_string()
     }
 
     fn get_group_name(&self, gid: u32) -> String {
-        // Try to get group name from /etc/group or use GID as fallback
-        match std::fs::read_to_string("/etc/group") {
-            Ok(content) => {
-                for line in content.lines() {
-                    let parts: Vec<&str> = line.split(':').collect();
-                    if parts.len() >= 3 {
-                        if let Ok(line_gid) = parts[2].parse::<u32>() {
-                            if line_gid == gid {
-                                return parts[0].to_string();
-                            }
+        // Try using getgrgid system call
+        unsafe {
+            let group = libc::getgrgid(gid as libc::gid_t);
+            if !group.is_null() {
+                let name = CStr::from_ptr((*group).gr_name).to_string_lossy();
+                return name.to_string();
+            }
+        }
+        
+        // Fallback: Try reading /etc/group directly
+        if let Ok(content) = std::fs::read_to_string("/etc/group") {
+            for line in content.lines() {
+                let parts: Vec<&str> = line.split(':').collect();
+                if parts.len() >= 3 {
+                    if let Ok(line_gid) = parts[2].parse::<u32>() {
+                        if line_gid == gid {
+                            return parts[0].to_string();
                         }
                     }
                 }
             }
-            Err(_) => {}
         }
+        
+        // Final fallback to GID as string
         gid.to_string()
     }
 
@@ -203,13 +239,18 @@ impl LsCommand {
             long_format: false,
             file_indicators: false,
         };
+
+        let mut is_option = true;
         let mut paths = Vec::new();
 
         for arg in args {
-            if arg.starts_with('-') {
+            if arg.starts_with('-') && is_option {
                 if arg == "-" {
                     // Single dash is treated as a path
                     paths.push(arg.clone());
+                } else if arg == "--" {
+                    is_option = false;
+                    continue; // Skip to next argument
                 } else {
                     // Parse flags
                     for c in arg[1..].chars() {
@@ -242,12 +283,56 @@ impl LsCommand {
             return Err(ShellError::FileSystemError("No such file or directory".to_string()));
         }
 
-        // Check if it's a directory
-        if !path.is_dir() {
-            return Err(ShellError::FileSystemError("Not a directory".to_string()));
+        // Handle files vs directories
+        if path.is_file() {
+            return self.list_file(path, flags);
+        } else if path.is_dir() {
+            return self.list_directory_contents(path, flags);
+        } else {
+            // Handle other file types (symlinks, etc.)
+            return self.list_file(path, flags);
         }
+    }
 
-        // Read directory contents
+    fn list_file(&self, path: &Path, flags: &LsFlags) -> Result<(), ShellError> {
+        // Use the full path instead of just the filename
+        let name = path.to_string_lossy().to_string();
+
+        if flags.long_format {
+            self.print_one_long(path.parent().unwrap_or(Path::new(".")), &name, flags)?;
+        } else {
+            let mut display_name = name.clone();
+            
+            if let Ok(metadata) = fs::symlink_metadata(path) {
+                if flags.file_indicators {
+                    let ftype = metadata.file_type();
+                    if ftype.is_dir() {
+                        display_name.push('/');
+                    } else if ftype.is_symlink() {
+                        // For symlinks, only show @ indicator in short format, not long format
+                        if !flags.long_format {
+                            display_name.push('@');
+                        }
+                        // In long format, indicators will be added to the target in the link_suffix
+                    } else if ftype.is_fifo() {
+                        display_name.push('|');
+                    } else if ftype.is_socket() {
+                        display_name.push('=');
+                    } else if self.is_executable(&metadata) {
+                        display_name.push('*');
+                    }
+                }
+                
+                println!("{display_name}");
+            } else {
+                println!("{display_name}");
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn list_directory_contents(&self, path: &Path, flags: &LsFlags) -> Result<(), ShellError> {
         let entries = fs::read_dir(path)
             .map_err(|e| {
                 match e.kind() {
@@ -267,7 +352,6 @@ impl LsCommand {
                 Ok(entry) => {
                     let name = entry.file_name().to_string_lossy().to_string();
                     
-                    // Skip hidden files unless -a flag is set
                     if !flags.show_hidden && name.starts_with('.') {
                         continue;
                     }
@@ -275,12 +359,11 @@ impl LsCommand {
                     files.push(entry);
                 }
                 Err(e) => {
-                    eprintln!("ls: cannot access '{}': {}", path_str, e);
+                    eprintln!("ls: cannot access '{}': {}", path.display(), e);
                 }
             }
         }
 
-        // Sort files according to LC_COLLATE (locale-aware collation)
         files.sort_by(|a, b| {
             let name_a = a.file_name().to_string_lossy().to_string().replace(".", "").to_lowercase();
             let name_b = b.file_name().to_string_lossy().to_string().replace(".", "").to_lowercase();
@@ -309,13 +392,17 @@ impl LsCommand {
             let name = entry.file_name().to_string_lossy().to_string();
             let mut display_name = name.clone();
             
-            if let Ok(metadata) = entry.metadata() {
+            if let Ok(metadata) = fs::symlink_metadata(entry.path()) {
                 if flags.file_indicators {
                     let ftype = metadata.file_type();
                     if ftype.is_dir() {
                         display_name.push('/');
                     } else if ftype.is_symlink() {
-                        display_name.push('@');
+                        // For symlinks, only show @ indicator in short format, not long format
+                        if !flags.long_format {
+                            display_name.push('@');
+                        }
+                        // In long format, indicators will be added to the target in the link_suffix
                     } else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
@@ -325,8 +412,7 @@ impl LsCommand {
                     }
                 }
                 
-                let color = self.get_color(&metadata);
-                print!("{}{}{}  ", color, display_name, RESET);
+                print!("{}  ", display_name);
             } else {
                 print!("{}  ", display_name);
             }
@@ -374,7 +460,8 @@ impl LsCommand {
                     if ftype.is_dir() {
                         display_name.push('/');
                     } else if ftype.is_symlink() {
-                        display_name.push('@');
+                        // For symlinks, don't add any indicator to the symlink name itself
+                        // Indicators will be added to the target in the link_suffix
                     } else if ftype.is_fifo() {
                         display_name.push('|');
                     } else if ftype.is_socket() {
@@ -387,16 +474,33 @@ impl LsCommand {
                 // If symlink, append " -> target" like ls -l
                 let link_suffix = if ftype.is_symlink() {
                     match std::fs::read_link(entry.path()) {
-                        Ok(target) => format!(" -> {}", target.display()),
+                        Ok(target) => {
+                            let mut target_str = target.display().to_string();
+                            // Add file type indicator to the target if -F flag is used
+                            if flags.file_indicators {
+                                if let Ok(target_meta) = fs::metadata(entry.path()) {
+                                    let target_type = target_meta.file_type();
+                                    if target_type.is_socket() {
+                                        target_str.push('=');
+                                    } else if target_type.is_dir() {
+                                        target_str.push('/');
+                                    } else if target_type.is_fifo() {
+                                        target_str.push('|');
+                                    } else if self.is_executable(&target_meta) {
+                                        target_str.push('*');
+                                    }
+                                }
+                            }
+                            format!(" -> {}", target_str)
+                        },
                         Err(_) => String::from(" -> (broken)"),
                     }
                 } else {
                     String::new()
                 };
 
-                let color = self.get_color(&metadata);
-                println!("{} {:>4} {} {} {} {} {}{}{}{}", 
-                    perms, nlink, owner, group, size_field, time_str, color, display_name, RESET, link_suffix);
+                println!("{} {:>4} {} {} {} {} {}{}", 
+                    perms, nlink, owner, group, size_field, time_str, display_name, link_suffix);
             } else {
                 println!("{}", display_name);
             }
@@ -404,23 +508,10 @@ impl LsCommand {
         Ok(())
     }
 
-    fn get_color(&self, metadata: &fs::Metadata) -> &'static str {
-        if metadata.is_dir() {
-            BLUE_BOLD
-        } else if metadata.is_symlink() {
-            CYAN
-        } else if self.is_executable(metadata) {
-            GREEN
-        } else {
-            RESET
-        }
-    }
-
     fn format_permissions(&self, metadata: &fs::Metadata) -> String {
         let mode = metadata.permissions().mode();
         let mut perms = String::new();
         
-        // File type (matches ls -l leading character)
         let ftype = metadata.file_type();
         if ftype.is_dir() {
             perms.push('d');
@@ -486,146 +577,57 @@ impl LsCommand {
     }
 
     fn has_extended_attributes(&self, path: &Path) -> bool {
-        // Try to detect extended attributes using system commands
-        // First try getfacl (for ACLs)
-        if let Ok(output) = Command::new("getfacl")
-            .arg(path)
-            .output()
-        {
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                // Check if there are any user-specific or group-specific ACL entries
-                // Standard ACLs only have user::, group::, and other:: entries
-                // Extended ACLs have additional user:username: or group:groupname: entries
-                for line in output_str.lines() {
-                    if line.starts_with("user:") && !line.starts_with("user::") {
-                        return true; // Found user-specific ACL
-                    }
-                    if line.starts_with("group:") && !line.starts_with("group::") {
-                        return true; // Found group-specific ACL
-                    }
-                    if line.starts_with("mask::") {
-                        return true; // Found ACL mask
+        // Use libc system calls to detect extended attributes
+        // Convert path to C string
+        let path_cstr = match std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        
+        unsafe {
+            let mut buffer = [0u8; 1024];
+            let result = libc::listxattr(
+                path_cstr.as_ptr(),
+                buffer.as_mut_ptr() as *mut i8,
+                buffer.len(),
+            );
+            
+            if result > 0 {
+                let attr_names = std::str::from_utf8(&buffer[..result as usize]).unwrap_or("");
+                for name in attr_names.split('\0') {
+                    if !name.is_empty() && self.is_extended_attribute(name) {
+                        return true;
                     }
                 }
             }
         }
         
-        // Try lsattr to check for extended attributes (Linux-specific)
-        if let Ok(output) = Command::new("lsattr")
-            .arg(path)
-            .output()
-        {
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                if let Some(line) = output_str.lines().next() {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        let flags = parts[0];
-                        // Only check for specific extended attribute flags
-                        // Standard flags like 'e' (extent-based allocation) are not extended attributes
-                        // Extended attributes are typically things like 'i' (immutable), 'a' (append-only), etc.
-                        // But we need to be careful - only some flags indicate extended attributes
-                        let extended_flags = ['i', 'a', 'j', 's', 't', 'u', 'A', 'S', 'T', 'D'];
-                        if flags.chars().any(|c| extended_flags.contains(&c)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // No extended attributes detected
         false
+    }
+    
+    fn is_extended_attribute(&self, name: &str) -> bool {
+        name.starts_with("system.posix_acl_") ||
+        name.starts_with("security.") ||
+        name.starts_with("trusted.") ||
+        name.starts_with("user.") ||
+        name.starts_with("system.") ||
+        name.starts_with("xattr.")
     }
 
     fn format_time(&self, time: SystemTime) -> String {
         let now = SystemTime::now();
         let duration = now.duration_since(time).unwrap_or_default();
         
-        // If file is older than 6 months, show year instead of time
         let six_months = std::time::Duration::from_secs(6 * 30 * 24 * 60 * 60);
         
-        // Convert SystemTime to timestamp for formatting
-        let timestamp = time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-        let secs = timestamp.as_secs();
         
-        // Simple time formatting using standard library
+        let datetime: DateTime<Local> = time.into();
+        
         if duration > six_months {
-            // Show year for old files: "Jan 01  2024"
-            self.format_date_with_year(secs)
+            datetime.format("%b %d  %Y").to_string()
         } else {
-            // Show time for recent files: "Jan 01 12:00"
-            self.format_date_with_time(secs)
-        }
-    }
 
-    fn format_date_with_year(&self, secs: u64) -> String {
-        let (month, day, year) = self.seconds_to_date(secs);
-        let month_name = self.month_to_name(month);
-        format!("{} {:2}  {}", month_name, day, year)
-    }
-
-    fn format_date_with_time(&self, secs: u64) -> String {
-        // Get timezone offset and apply it
-        let timezone_offset = self.get_timezone_offset();
-        let local_secs = (secs as i64 + timezone_offset) as u64;
-        
-        // Use local seconds for date calculation too
-        let (month, day, _) = self.seconds_to_date(local_secs);
-        let month_name = self.month_to_name(month);
-        
-        let hours = (local_secs % (24 * 60 * 60)) / (60 * 60);
-        let minutes = (local_secs % (60 * 60)) / 60;
-        
-        format!("{} {:2} {:02}:{:02}", month_name, day, hours, minutes)
-    }
-
-    fn seconds_to_date(&self, secs: u64) -> (u32, u32, u32) {
-        let mut days = secs / (24 * 60 * 60);
-        let mut year = 1970;
-        
-        // Account for leap years
-        while days >= self.days_in_year(year) {
-            days -= self.days_in_year(year);
-            year += 1;
-        }
-        
-        let mut month = 1;
-        let mut day = days as u32;
-        
-        // Calculate month and day
-        while day >= self.days_in_month(year, month) {
-            day -= self.days_in_month(year, month);
-            month += 1;
-        }
-        
-        (month, day + 1, year) // +1 because day 0 is January 1st
-    }
-
-    fn days_in_year(&self, year: u32) -> u64 {
-        if self.is_leap_year(year) { 366 } else { 365 }
-    }
-
-    fn is_leap_year(&self, year: u32) -> bool {
-        (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))
-    }
-
-    fn days_in_month(&self, year: u32, month: u32) -> u32 {
-        match month {
-            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-            4 | 6 | 9 | 11 => 30,
-            2 => if self.is_leap_year(year) { 29 } else { 28 },
-            _ => 30,
-        }
-    }
-
-    fn month_to_name(&self, month: u32) -> &'static str {
-        match month {
-            1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-            5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-            9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
-            _ => "Jan",
+            datetime.format("%b %d %H:%M").to_string()
         }
     }
 
@@ -633,40 +635,49 @@ impl LsCommand {
         let mode = metadata.permissions().mode();
         mode & 0o111 != 0
     }
+}
 
-    // Timezone detection methods
-    fn get_timezone_offset(&self) -> i64 {
-        // Method 1: Try to read from environment
-        if let Ok(tz) = std::env::var("TZ") {
-            if let Some(offset) = self.parse_tz_env(&tz) {
-                return offset;
-            }
+
+
+impl CommandExecutor for CatCommand {
+    fn execute(&self, args: &[String]) -> Result<(), ShellError> {
+        let mut command_options = CommandOptions {
+            is_option: true,
+        };
+        // If no arguments provided, read from stdin
+        if args.is_empty() {
+            return self.read_from_stdin();
         }
         
-        // Method 2: Try to read from /etc/timezone
-        if let Ok(content) = std::fs::read_to_string("/etc/timezone") {
-            if let Some(offset) = self.parse_timezone_name(&content.trim()) {
-                return offset;
-            }
-        }
-        
-        // Default fallback (adjust based on your location)
-        3600 // UTC+1
-    }
+        //let mut has_error = false;
 
-    fn parse_tz_env(&self, tz: &str) -> Option<i64> {
-        // Parse TZ format like "UTC+1" or "CET-1"
-        if tz.starts_with("UTC") {
-            if let Some(offset_str) = tz.strip_prefix("UTC") {
-                if offset_str.is_empty() {
-                    return Some(0);
+        for file_path in args {
+            if file_path == "--" {
+                command_options.is_option = false;
+                if args.len() == 1 {
+                    return self.read_from_stdin();
                 }
-                if let Ok(offset) = offset_str.parse::<i64>() {
-                    return Some(offset * 3600);
+                continue;
+                
+            }
+            if file_path.starts_with('-') && file_path != "-" && command_options.is_option {
+                return Err(ShellError::InvalidOption(file_path.clone()));
+            }
+            match self.process_file(file_path) {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("cat: {}: {}", file_path, e);
+                    //has_error = true;
                 }
             }
         }
-        None
+
+        // if has_error {
+        //     Err(ShellError::ExecutionError("Some files could not be processed".to_string()))
+        // } else {
+        //     Ok(())
+        // }
+        Ok(())
     }
 
     fn parse_timezone_name(&self, tz_name: &str) -> Option<i64> {
