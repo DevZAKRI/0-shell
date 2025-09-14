@@ -17,6 +17,7 @@ use chrono::{DateTime, Local};
 // const GREEN: &str = "\x1b[0;32m";      // Executables
 // const CYAN: &str = "\x1b[0;36m";       // Symlinks
 
+use std::env;
 pub struct PwdCommand;
 pub struct CdCommand;
 pub struct LsCommand;
@@ -962,18 +963,29 @@ impl CommandExecutor for MvCommand {
         "mv source... destination - Move (rename) files or directories"
     }
 }
-
 impl CommandExecutor for RmCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
-         if args.is_empty() {
+     let pwd = env::current_dir().unwrap().to_string_lossy().to_string(); // current directory as String
+
+
+        if args.is_empty() {
             return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
         }
-        
+
         let mut recursive = false;
         let mut is_option = true;
         let mut targets: Vec<&String> = Vec::new();
 
         for arg in args {
+           
+            if arg.as_str() == pwd {
+                return Err(ShellError::ExecutionError("rm: refusing to remove current directory".to_string()));
+            }
+            if is_dot_or_dotdot(arg) {
+                return Err(
+                    ShellError::ExecutionError("rm: refusing to remove '.' or '..'".to_string())
+                );
+            }
             if arg == "--" {
                 is_option = false;
                 continue;
@@ -986,7 +998,7 @@ impl CommandExecutor for RmCommand {
                 targets.push(arg);
             }
         }
-        
+
         if targets.is_empty() {
             return Err(ShellError::ExecutionError("rm: missing operand".to_string()));
         }
@@ -995,16 +1007,18 @@ impl CommandExecutor for RmCommand {
 
             if !path.exists() {
                 eprintln!("rm: cannot remove '{}': No such file or directory", target);
-                continue; 
+                continue;
             }
             let result = if path.is_dir() {
                 if recursive {
                     fs::remove_dir_all(path)
                 } else {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("rm: cannot remove '{}': Is a directory (use -r)", target),
-                    ))
+                    Err(
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("rm: cannot remove '{}': Is a directory (use -r)", target)
+                        )
+                    )
                 }
             } else {
                 fs::remove_file(path)
@@ -1020,4 +1034,7 @@ impl CommandExecutor for RmCommand {
     fn help(&self) -> &str {
         "rm [-r] [file...] - Remove files or directories"
     }
+}
+fn is_dot_or_dotdot(path: &str) -> bool {
+    path == "." || path == ".." || path == "./" || path == "../"
 }
