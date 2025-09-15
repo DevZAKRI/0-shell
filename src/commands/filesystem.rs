@@ -123,10 +123,6 @@ impl CdCommand {
             return Ok(self.get_home_directory()?);
         }
 
-        if target == "~" {
-            return Ok(self.get_home_directory()?);
-        }
-
         if target.starts_with("~/") {
             let home = self.get_home_directory()?;
             let path = target.strip_prefix("~/").unwrap();
@@ -160,6 +156,7 @@ impl CdCommand {
 
 impl CommandExecutor for LsCommand {
     fn execute(&self, args: &[String]) -> Result<(), ShellError> {
+        for _arg in args {}
         let (flags, paths) = self.parse_args(args)?;
         
         
@@ -171,6 +168,7 @@ impl CommandExecutor for LsCommand {
 
         let mut files = Vec::new();
         let mut directories = Vec::new();
+        let mut missing = Vec::new();
         
         for path in &paths {
             let path_obj = Path::new(path);
@@ -179,8 +177,16 @@ impl CommandExecutor for LsCommand {
             } else if path_obj.is_dir() {
                 directories.push(path.clone());
             } else {
-                files.push(path.clone());
+                if !path_obj.exists() {
+                    missing.push(path.clone());
+                } else {
+                    files.push(path.clone());
+                }
             }
+        }
+        
+        for m in &missing {
+            eprintln!("ls: {}: No such file or directory", m);
         }
         
         if !files.is_empty() {

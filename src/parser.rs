@@ -142,7 +142,6 @@ impl CommandParser {
         Ok(Some(Command { name, args }))
     }
 }
-
 fn expand_tilde_word(word: &str) -> String {
     if word == "~" {
         return std::env::var("HOME").unwrap_or_else(|_| String::from("~"));
@@ -154,3 +153,4 @@ fn expand_tilde_word(word: &str) -> String {
     }
     word.to_string()
 }
+
