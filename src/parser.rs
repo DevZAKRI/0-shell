@@ -26,6 +26,7 @@ impl CommandParser {
         let mut current_part = String::new();
         let mut in_quotes = false;
         let mut quote_char = '\0';
+        let mut token_had_quotes = false;
         let mut chars = trimmed.chars();
     
         while let Some(ch) = chars.next() {
@@ -34,6 +35,7 @@ impl CommandParser {
                     if !in_quotes {
                         in_quotes = true;
                         quote_char = ch;
+                        token_had_quotes = true;
                     } else if ch == quote_char {
                         in_quotes = false;
                         quote_char = '\0';
@@ -46,8 +48,14 @@ impl CommandParser {
                         current_part.push('\n');
                     } else {
                         if !current_part.is_empty() {
-                            parts.push(current_part.clone());
+                            let pushed = if !token_had_quotes {
+                                expand_tilde_word(&current_part)
+                            } else {
+                                current_part.clone()
+                            };
+                            parts.push(pushed);
                             current_part.clear();
+                            token_had_quotes = false;
                         }
                     }
                 }
@@ -89,8 +97,14 @@ impl CommandParser {
                 ' ' | '\t' => {
                     if !in_quotes {
                         if !current_part.is_empty() {
-                            parts.push(current_part.clone());
+                            let pushed = if !token_had_quotes {
+                                expand_tilde_word(&current_part)
+                            } else {
+                                current_part.clone()
+                            };
+                            parts.push(pushed);
                             current_part.clear();
+                            token_had_quotes = false;
                         }
                     } else {
                         current_part.push(ch);
@@ -102,13 +116,17 @@ impl CommandParser {
             }
         }
     
-        // Check for unclosed quotes and return a special error
         if in_quotes {
             return Err(ShellError::IncompleteInput(quote_char));
         }
     
         if !current_part.is_empty() {
-            parts.push(current_part);
+            let pushed = if !token_had_quotes {
+                expand_tilde_word(&current_part)
+            } else {
+                current_part.clone()
+            };
+            parts.push(pushed);
         } else if in_quotes == false && !parts.is_empty() {
             // Handle empty quoted strings as arguments
             parts.push(String::new());
@@ -123,4 +141,16 @@ impl CommandParser {
     
         Ok(Some(Command { name, args }))
     }
+}
+
+fn expand_tilde_word(word: &str) -> String {
+    if word == "~" {
+        return std::env::var("HOME").unwrap_or_else(|_| String::from("~"));
+    }
+    if let Some(rest) = word.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{}/{}", home, rest);
+        }
+    }
+    word.to_string()
 }
