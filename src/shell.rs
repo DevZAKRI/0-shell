@@ -6,6 +6,7 @@ use crate::error::ShellError;
 pub struct Shell {
     command_registry: CommandRegistry,
     parser: CommandParser,
+    last_dir: std::path::PathBuf,
 }
 
 impl Shell {
@@ -13,6 +14,7 @@ impl Shell {
         Self {
             command_registry: CommandRegistry::new(),
             parser: CommandParser::new(),
+            last_dir: std::path::PathBuf::new(),
         }
     }
 
@@ -40,15 +42,24 @@ impl Shell {
         Ok(())
     }
 
-    fn display_prompt(&self) -> Result<(), ShellError> {
-        let current_dir = std::env::current_dir().map_err(ShellError::IoError)?;
+    fn display_prompt(&mut self) -> Result<(), ShellError> {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
-    
+
+        let current_dir = match std::env::current_dir() {
+            Ok(dir) => {
+                self.last_dir = dir.clone(); 
+                dir
+            }
+            Err(_) => {
+                self.last_dir.clone()
+            }
+        };
+
         let mut display_dir = current_dir.to_string_lossy().to_string();
         if display_dir.starts_with(&home) {
             display_dir = display_dir.replacen(&home, "~", 1);
         }
-    
+
         print!("{} $ ", display_dir);
         std::io::stdout().flush().map_err(ShellError::IoError)?;
         Ok(())
