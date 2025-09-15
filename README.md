@@ -145,7 +145,3 @@ This project demonstrates:
 ## License
 
 This project is open source and available under the [MIT License](LICENSE).
-
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for detailed development phases and future enhancements.
